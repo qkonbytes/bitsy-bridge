@@ -20,6 +20,8 @@ import {
   Download,
   Lock,
   ChevronLeft,
+  MapPin,
+  AlertTriangle,
 } from "lucide-react";
 
 // ---------- Design tokens ----------
@@ -154,6 +156,29 @@ function getShopifyRows(storeName) {
   return [];
 }
 
+// Placeholder until Shopify OAuth is wired in — real locations come from Shopify's Locations API once connected
+const MOCK_SHOPIFY_LOCATIONS = {
+  "Acme Hardware": [
+    { id: "gid://shopify/Location/70011", name: "Acme — Main Store" },
+    { id: "gid://shopify/Location/70012", name: "Acme — Overflow Depot" },
+    { id: "gid://shopify/Location/70013", name: "Acme — Retail Front" },
+  ],
+  "Coastal Supply Co.": [
+    { id: "gid://shopify/Location/70021", name: "Coastal — HQ" },
+    { id: "gid://shopify/Location/70022", name: "Coastal — Dock Warehouse" },
+  ],
+};
+
+function getErpLocationsUsed(storeName) {
+  return ERP_LOCATIONS.filter((loc) => getErpRows(storeName).some((r) => r.location === loc));
+}
+
+// ERP rows whose part number has no match in shopify_data — driven from the ERP side, per the sync logic
+function getNotMatchedRows(storeName) {
+  const shopifySkus = new Set(getShopifyRows(storeName).map((r) => r.sku));
+  return getErpRows(storeName).filter((r) => !shopifySkus.has(r.sku));
+}
+
 
 
 const MOCK_LOGS = [
@@ -265,6 +290,7 @@ function Sidebar({ role, active, setActive }) {
     { key: "dashboard", label: "Dashboard", icon: LayoutGrid },
     { key: "shopifydb", label: "Shopify", icon: ShoppingBag },
     { key: "erpdb", label: "ERP", icon: Database },
+    { key: "notmatched", label: "Not Matched", icon: AlertTriangle },
     { key: "history", label: "Sync History", icon: Activity },
     { key: "settings", label: "Settings", icon: Settings },
   ];
@@ -987,15 +1013,125 @@ function StoreOverview({ store }) {
   );
 }
 
+// ---------- Admin: Location mapping (Q-KON Bytes only) ----------
+// ---------- Admin: Not Matched (ERP part numbers with no Shopify match) ----------
+function NotMatched({ store }) {
+  const rows = getNotMatchedRows(store.name);
+
+  return (
+    <div>
+      <div className="disp" style={{ color: C.textHi, fontSize: 14, fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+        <AlertTriangle size={15} color={C.error} /> Not matched
+      </div>
+      <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, margin: "0 0 16px 0" }}>
+        ERP part numbers with no matching SKU in Shopify — never pushed, since bitsy_bridge doesn't create new Shopify products.
+      </p>
+      <DBTable
+        columns={[
+          { key: "sku", label: "Part number", width: "0.9fr" },
+          { key: "name", label: "Product", width: "1.6fr" },
+          { key: "location", label: "Location", width: "1fr", render: (r) => LOCATION_LABEL(r.location) },
+          { key: "qty", label: "Qty", width: "0.6fr" },
+          { key: "price", label: "Price", width: "0.7fr", render: (r) => `R ${r.price.toFixed(2)}` },
+          { key: "lastReceived", label: "Last seen", width: "0.8fr" },
+        ]}
+        rows={rows}
+      />
+    </div>
+  );
+}
+
+function LocationMapping({ store }) {
+  const erpLocations = getErpLocationsUsed(store.name);
+  const shopifyLocations = MOCK_SHOPIFY_LOCATIONS[store.name] || [];
+
+  const [mapping, setMapping] = useState(() =>
+    Object.fromEntries(erpLocations.map((loc, i) => [loc, shopifyLocations[i]?.id || ""]))
+  );
+
+  const cardStyle = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 };
+
+  return (
+    <div>
+      <div className="disp" style={{ color: C.textHi, fontSize: 14, fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+        <MapPin size={15} color={C.accent} /> Location mapping
+      </div>
+      <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, margin: "0 0 4px 0" }}>
+        Internal only — determines which ERP location's stock updates which Shopify location.
+      </p>
+      {shopifyLocations.length === 0 && (
+        <p className="body-f" style={{ color: C.textFaint, fontSize: 12, margin: "0 0 16px 0" }}>
+          Shopify locations will populate automatically once this store is connected via OAuth. Showing placeholder data for now.
+        </p>
+      )}
+      <div style={{ height: 12 }} />
+
+      <div style={cardStyle}>
+        <div
+          className="body-f"
+          style={{
+            display: "grid", gridTemplateColumns: "1fr 1fr 0.6fr", padding: "0 0 10px 0",
+            borderBottom: `1px solid ${C.border}`, fontSize: 11.5, color: C.textFaint, fontWeight: 600, marginBottom: 12,
+          }}
+        >
+          <span>ERP location</span><span>Shopify location</span><span></span>
+        </div>
+        {erpLocations.length === 0 && (
+          <p className="body-f" style={{ color: C.textFaint, fontSize: 13 }}>No ERP locations found for this store yet.</p>
+        )}
+        {erpLocations.map((loc, i) => (
+          <div
+            key={loc}
+            style={{
+              display: "grid", gridTemplateColumns: "1fr 1fr 0.6fr", alignItems: "center",
+              padding: "10px 0", borderBottom: i < erpLocations.length - 1 ? `1px solid ${C.border}` : "none",
+            }}
+          >
+            <span className="mono" style={{ color: C.textHi, fontSize: 12.5 }}>{LOCATION_LABEL(loc)}</span>
+            <select
+              value={mapping[loc] || ""}
+              onChange={(e) => setMapping({ ...mapping, [loc]: e.target.value })}
+              className="focus-ring body-f"
+              style={{
+                background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+                padding: "7px 10px", color: C.textHi, fontSize: 12.5, cursor: "pointer", maxWidth: 260,
+              }}
+            >
+              <option value="">Select a Shopify location…</option>
+              {shopifyLocations.map((sl) => (
+                <option key={sl.id} value={sl.id}>{sl.name}</option>
+              ))}
+            </select>
+            <span style={{ textAlign: "right" }}>
+              <button
+                className="focus-ring body-f"
+                style={{
+                  background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
+                  borderRadius: 7, padding: "5px 11px", fontSize: 11.5, cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", gap: 5,
+                }}
+              >
+                <Check size={12} /> Save
+              </button>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function StoreDetail({ store, onBack }) {
   const [tab, setTab] = useState("overview");
   const tabs = [
     { key: "overview", label: "Overview" },
     { key: "shopify", label: "Shopify" },
     { key: "erp", label: "ERP" },
+    { key: "notmatched", label: "Not Matched" },
     { key: "history", label: "Sync History" },
     { key: "logs", label: "Logs" },
     { key: "connections", label: "Connections" },
+    { key: "locations", label: "Locations" },
   ];
 
   return (
@@ -1041,9 +1177,11 @@ function StoreDetail({ store, onBack }) {
       {tab === "overview" && <StoreOverview store={store} />}
       {tab === "shopify" && <AdminShopifyDB fixedStore={store.name} />}
       {tab === "erp" && <AdminERPDB fixedStore={store.name} />}
+      {tab === "notmatched" && <NotMatched store={store} />}
       {tab === "history" && <CustomerHistory storeName={store.name} />}
       {tab === "logs" && <AdminLogs fixedStore={store.name} />}
       {tab === "connections" && <AdminConnections store={store.name} />}
+      {tab === "locations" && <LocationMapping store={store} />}
     </div>
   );
 }
@@ -1637,6 +1775,51 @@ function CustomerERPDB() {
   );
 }
 
+// ---------- Customer: Not Matched (read-only, own store) ----------
+function CustomerNotMatched() {
+  const store = MOCK_STORES[1];
+  const rows = getNotMatchedRows(store.name);
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <div>
+          <h1 className="disp" style={{ color: C.textHi, fontSize: 22, fontWeight: 700, margin: 0 }}>Not Matched</h1>
+          <p className="body-f" style={{ color: C.textLo, fontSize: 13, margin: "4px 0 0 0" }}>
+            Part numbers in your ERP with no matching product in Shopify
+          </p>
+        </div>
+        <ViewOnlyTag />
+      </div>
+      <div style={{ height: 18 }} />
+      {rows.length === 0 ? (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 24 }}>
+          <p className="body-f" style={{ color: C.textFaint, fontSize: 13, margin: 0 }}>
+            Nothing here — every ERP part number currently matches a Shopify product.
+          </p>
+        </div>
+      ) : (
+        <>
+          <p className="body-f" style={{ color: C.textFaint, fontSize: 12, margin: "0 0 12px 0" }}>
+            These aren't synced — bitsy_bridge never creates new Shopify products. Add the product in Shopify with a matching SKU, or contact us at enquiries@qkonbytes.com.
+          </p>
+          <DBTable
+            columns={[
+              { key: "sku", label: "Part number", width: "0.9fr" },
+              { key: "name", label: "Product", width: "1.6fr" },
+              { key: "location", label: "Location", width: "1fr", render: (r) => LOCATION_LABEL(r.location) },
+              { key: "qty", label: "Qty", width: "0.6fr" },
+              { key: "price", label: "Price", width: "0.7fr", render: (r) => `R ${r.price.toFixed(2)}` },
+              { key: "lastReceived", label: "Last seen", width: "0.8fr" },
+            ]}
+            rows={rows}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
 function buildHistoryTxt(run) {
   const lines = [
     `Sync run — ${run.time}`,
@@ -1866,6 +2049,7 @@ export default function BitsyBridgeDashboard() {
       if (active === "dashboard") return <CustomerDashboard />;
       if (active === "shopifydb") return <CustomerShopifyDB />;
       if (active === "erpdb") return <CustomerERPDB />;
+      if (active === "notmatched") return <CustomerNotMatched />;
       if (active === "history") return <CustomerHistory />;
       if (active === "settings") return <CustomerSettings clientRole={clientRole} />;
     }
