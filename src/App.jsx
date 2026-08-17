@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { supabase } from "./lib/supabaseClient";
+import { supabase, isSupabaseConfigured } from "./lib/supabaseClient";
 import {
   LayoutGrid,
   Activity,
@@ -970,6 +970,7 @@ function AdminAuthGate({ children, onSwitchToCustomer }) {
   };
 
   useEffect(() => {
+    if (!isSupabaseConfigured) return; // handled by the not_configured render below
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       checkIsPlatformAdmin(data.session);
@@ -984,6 +985,36 @@ function AdminAuthGate({ children, onSwitchToCustomer }) {
   const handleSignOut = async () => {
     await supabase.auth.signOut();
   };
+
+  if (!isSupabaseConfigured) {
+    return (
+      <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <style>{FONTS}</style>
+        <div style={{ textAlign: "center", maxWidth: 380 }}>
+          <AlertTriangle size={22} color={C.error} style={{ marginBottom: 12 }} />
+          <p className="body-f" style={{ color: C.textHi, fontSize: 14, marginBottom: 6 }}>
+            Supabase isn't configured
+          </p>
+          <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, marginBottom: 18 }}>
+            <span className="mono">VITE_SUPABASE_URL</span> and/or <span className="mono">VITE_SUPABASE_ANON_KEY</span> are missing.
+            Set them in Vercel's Project Settings → Environment Variables (or <span className="mono">.env.local</span> for local dev), then redeploy.
+          </p>
+          {onSwitchToCustomer && (
+            <button
+              onClick={onSwitchToCustomer}
+              className="focus-ring body-f"
+              style={{
+                background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
+                borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer",
+              }}
+            >
+              View customer side instead
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (status === "loading" || status === "checking_admin") {
     return (
