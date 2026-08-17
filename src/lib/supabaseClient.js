@@ -6,10 +6,17 @@ import { createClient } from "@supabase/supabase-js";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+
+if (!isSupabaseConfigured) {
   console.warn(
     "Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY — admin login will not work until these are set (see .env.example)."
   );
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// createClient throws immediately on an empty/invalid URL, which would crash
+// the whole app before React ever renders. Guard it so a missing config shows
+// a real message in the UI instead of a blank white screen.
+export const supabase = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : null;
