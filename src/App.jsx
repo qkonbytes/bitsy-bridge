@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { supabase, isSupabaseConfigured } from "./lib/supabaseClient";
+import { createClient } from "@supabase/supabase-js";
 import {
   LayoutGrid,
   Activity,
@@ -1077,6 +1078,266 @@ function AdminAuthGate({ children, onSwitchToCustomer }) {
 
   // authorized
   return children(handleSignOut, session);
+}
+
+// ---------- Customer: two-step login (resolve project by email, then password against THAT project) ----------
+function CustomerLogin({ onResolved, onNotFound, onSkip }) {
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (!isSupabaseConfigured) {
+      setError("Supabase isn't configured — set VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY.");
+      return;
+    }
+    setLoading(true);
+    const { data, error: rpcError } = await supabase.rpc("resolve_client_project", { p_email: email });
+    setLoading(false);
+    if (rpcError) {
+      setError(rpcError.message);
+      return;
+    }
+    const match = Array.isArray(data) ? data[0] : data;
+    if (!match || !match.supabase_url) {
+      onNotFound(email);
+      return;
+    }
+    onResolved(email, match);
+  };
+
+  const inputStyle = {
+    width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+    padding: "10px 12px", color: C.textHi, fontSize: 13.5, boxSizing: "border-box",
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <style>{FONTS}</style>
+      <form
+        onSubmit={handleSubmit}
+        style={{ width: 340, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 28 }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 22 }}>
+          <div style={{ width: 26, height: 26, borderRadius: 6, background: C.accentDim, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <ArrowRightLeft size={14} color={C.accent} />
+          </div>
+          <span className="disp" style={{ color: C.textHi, fontSize: 15, fontWeight: 700 }}>bitsy_bridge</span>
+        </div>
+
+        <label className="body-f" style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 6, display: "block" }}>Email</label>
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="focus-ring"
+          style={{ ...inputStyle, marginBottom: 14 }}
+          placeholder="you@yourstore.com"
+          required
+        />
+
+        {error && (
+          <div className="body-f" style={{ color: C.error, fontSize: 12.5, marginBottom: 14, background: C.errorDim, padding: "8px 10px", borderRadius: 7 }}>
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="focus-ring body-f"
+          style={{
+            width: "100%", background: loading ? C.border : C.accent, color: "#FFFFFF", border: "none",
+            borderRadius: 8, padding: "10px 14px", fontSize: 13.5, fontWeight: 600,
+            cursor: loading ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          }}
+        >
+          {loading && <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />}
+          {loading ? "Looking up your account…" : "Continue"}
+        </button>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+
+        {onSkip && (
+          <button
+            type="button"
+            onClick={onSkip}
+            className="focus-ring body-f"
+            style={{ width: "100%", background: "transparent", border: "none", color: C.textFaint, fontSize: 12, cursor: "pointer", marginTop: 14, textAlign: "center" }}
+          >
+            No client project set up yet — skip and preview
+          </button>
+        )}
+      </form>
+    </div>
+  );
+}
+
+function CustomerPasswordStep({ email, storeName, clientSupabase, onSignedIn, onBack }) {
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    const { data, error: signInError } = await clientSupabase.auth.signInWithPassword({ email, password });
+    setLoading(false);
+    if (signInError) {
+      setError(signInError.message);
+      return;
+    }
+    onSignedIn(data.session);
+  };
+
+  const inputStyle = {
+    width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+    padding: "10px 12px", color: C.textHi, fontSize: 13.5, boxSizing: "border-box",
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <style>{FONTS}</style>
+      <form
+        onSubmit={handleSubmit}
+        style={{ width: 340, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 28 }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <div style={{ width: 26, height: 26, borderRadius: 6, background: C.accentDim, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <ArrowRightLeft size={14} color={C.accent} />
+          </div>
+          <span className="disp" style={{ color: C.textHi, fontSize: 15, fontWeight: 700 }}>bitsy_bridge</span>
+        </div>
+        <p className="body-f" style={{ color: C.textFaint, fontSize: 12, margin: "0 0 20px 0" }}>{storeName} · {email}</p>
+
+        <label className="body-f" style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 6, display: "block" }}>Password</label>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="focus-ring"
+          style={{ ...inputStyle, marginBottom: 18 }}
+          placeholder="••••••••"
+          required
+          autoFocus
+        />
+
+        {error && (
+          <div className="body-f" style={{ color: C.error, fontSize: 12.5, marginBottom: 14, background: C.errorDim, padding: "8px 10px", borderRadius: 7 }}>
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="focus-ring body-f"
+          style={{
+            width: "100%", background: loading ? C.border : C.accent, color: "#FFFFFF", border: "none",
+            borderRadius: 8, padding: "10px 14px", fontSize: 13.5, fontWeight: 600,
+            cursor: loading ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          }}
+        >
+          {loading && <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />}
+          {loading ? "Signing in…" : "Sign in"}
+        </button>
+
+        <button
+          type="button"
+          onClick={onBack}
+          className="focus-ring body-f"
+          style={{ width: "100%", background: "transparent", border: "none", color: C.textFaint, fontSize: 12, cursor: "pointer", marginTop: 14, textAlign: "center" }}
+        >
+          ← Use a different email
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function CustomerAuthGate({ children, onPreview }) {
+  const [step, setStep] = useState("email"); // email | password | authorized | not_found
+  const [email, setEmail] = useState("");
+  const [resolved, setResolved] = useState(null); // { supabase_url, anon_key, client_role, client_name }
+  const [clientSupabase, setClientSupabase] = useState(null);
+  const [session, setSession] = useState(null);
+
+  const handleResolved = (enteredEmail, match) => {
+    setEmail(enteredEmail);
+    setResolved(match);
+    setClientSupabase(createClient(match.supabase_url, match.anon_key));
+    setStep("password");
+  };
+
+  const handleNotFound = () => setStep("not_found");
+
+  const handleSignedIn = (s) => {
+    setSession(s);
+    setStep("authorized");
+  };
+
+  const handleSignOut = async () => {
+    if (clientSupabase) await clientSupabase.auth.signOut();
+    setStep("email");
+    setSession(null);
+    setResolved(null);
+    setClientSupabase(null);
+    setEmail("");
+  };
+
+  if (step === "email") {
+    return <CustomerLogin onResolved={handleResolved} onNotFound={handleNotFound} onSkip={onPreview} />;
+  }
+
+  if (step === "not_found") {
+    return (
+      <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <style>{FONTS}</style>
+        <div style={{ textAlign: "center", maxWidth: 340 }}>
+          <Lock size={22} color={C.textFaint} style={{ marginBottom: 12 }} />
+          <p className="body-f" style={{ color: C.textHi, fontSize: 14, marginBottom: 6 }}>No account found for {email}</p>
+          <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, marginBottom: 18 }}>
+            Contact your account admin, or reach us at enquiries@qkonbytes.com.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+            <button
+              onClick={() => setStep("email")}
+              className="focus-ring body-f"
+              style={{ background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi, borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer" }}
+            >
+              Try again
+            </button>
+            {onPreview && (
+              <button
+                onClick={onPreview}
+                className="focus-ring body-f"
+                style={{ background: "transparent", border: "none", color: C.textFaint, fontSize: 13, cursor: "pointer" }}
+              >
+                Skip and preview
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "password") {
+    return (
+      <CustomerPasswordStep
+        email={email}
+        storeName={resolved?.client_name}
+        clientSupabase={clientSupabase}
+        onSignedIn={handleSignedIn}
+        onBack={() => { setStep("email"); setResolved(null); setClientSupabase(null); }}
+      />
+    );
+  }
+
+  // authorized
+  return children(handleSignOut, session, resolved);
 }
 
 function Placeholder({ title }) {
@@ -2266,6 +2527,7 @@ export default function BitsyBridgeDashboard() {
   const [adminActive, setAdminActive] = useState("stores");
   const [customerActive, setCustomerActive] = useState("dashboard");
   const [selectedStore, setSelectedStore] = useState(null);
+  const [customerPreview, setCustomerPreview] = useState(false); // bypass real customer login until a client project exists
 
   const active = role === "admin" ? adminActive : customerActive;
   const setActive = (key) => {
@@ -2353,7 +2615,7 @@ export default function BitsyBridgeDashboard() {
     );
   }
 
-  return (
+  const customerShell = () => (
     <div style={{ background: C.bg, minHeight: "100vh", display: "flex" }}>
       <style>{FONTS}</style>
       <Sidebar role={role} active={active} setActive={setActive} />
@@ -2408,5 +2670,13 @@ export default function BitsyBridgeDashboard() {
         </div>
       </div>
     </div>
+  );
+
+  if (customerPreview) return customerShell();
+
+  return (
+    <CustomerAuthGate onPreview={() => setCustomerPreview(true)}>
+      {(handleSignOut, session, resolved) => customerShell()}
+    </CustomerAuthGate>
   );
 }
