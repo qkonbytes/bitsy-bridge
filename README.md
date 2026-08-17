@@ -5,11 +5,19 @@ Dashboard UI shell for the ERP → Shopify sync tool. Vite + React, no backend w
 ## Run locally
 
 ```
+cp .env.example .env.local
+# fill in .env.local with your bitsy-bridge-control project's URL + anon key
 npm install
 npm run dev
 ```
 
 Opens at http://localhost:5173
+
+## Admin login
+
+The admin side now uses real Supabase Auth against your `bitsy-bridge-control` project. Only users listed in the `platform_admins` table (with a matching `auth.users` row) can get past login — everyone else sees a "not set up as a platform admin" screen. The customer side still uses the "Preview as" mock toggle until per-client project auth is wired in.
+
+**On Vercel**: add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` under Project Settings → Environment Variables, then redeploy — `.env.local` only applies locally.
 
 ## Deploy to Vercel
 
