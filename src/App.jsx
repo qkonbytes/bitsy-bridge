@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
+import { supabase } from "./lib/supabaseClient";
 import {
   LayoutGrid,
   Activity,
@@ -22,6 +23,8 @@ import {
   ChevronLeft,
   MapPin,
   AlertTriangle,
+  LogOut,
+  Loader2,
 } from "lucide-react";
 
 // ---------- Design tokens ----------
@@ -837,6 +840,212 @@ function AdminLogs({ fixedStore }) {
       </div>
     </div>
   );
+}
+
+// ---------- Admin: real Supabase Auth login ----------
+function AdminLogin({ onSignedIn, onSwitchToCustomer }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    setLoading(false);
+    if (signInError) {
+      setError(signInError.message);
+      return;
+    }
+    onSignedIn(data.session);
+  };
+
+  const inputStyle = {
+    width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+    padding: "10px 12px", color: C.textHi, fontSize: 13.5, boxSizing: "border-box",
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <style>{FONTS}</style>
+      <form
+        onSubmit={handleSubmit}
+        style={{
+          width: 340, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12,
+          padding: 28,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 22 }}>
+          <div style={{ width: 26, height: 26, borderRadius: 6, background: C.accentDim, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <ArrowRightLeft size={14} color={C.accent} />
+          </div>
+          <span className="disp" style={{ color: C.textHi, fontSize: 15, fontWeight: 700 }}>bitsy_bridge admin</span>
+        </div>
+
+        <label className="body-f" style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 6, display: "block" }}>Email</label>
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="focus-ring"
+          style={{ ...inputStyle, marginBottom: 14 }}
+          placeholder="you@qkonbytes.com"
+          required
+        />
+
+        <label className="body-f" style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 6, display: "block" }}>Password</label>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="focus-ring"
+          style={{ ...inputStyle, marginBottom: 18 }}
+          placeholder="••••••••"
+          required
+        />
+
+        {error && (
+          <div className="body-f" style={{ color: C.error, fontSize: 12.5, marginBottom: 14, background: C.errorDim, padding: "8px 10px", borderRadius: 7 }}>
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="focus-ring body-f"
+          style={{
+            width: "100%", background: loading ? C.border : C.accent, color: "#FFFFFF", border: "none",
+            borderRadius: 8, padding: "10px 14px", fontSize: 13.5, fontWeight: 600,
+            cursor: loading ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          }}
+        >
+          {loading && <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />}
+          {loading ? "Signing in…" : "Sign in"}
+        </button>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+
+        {onSwitchToCustomer && (
+          <button
+            type="button"
+            onClick={onSwitchToCustomer}
+            className="focus-ring body-f"
+            style={{
+              width: "100%", background: "transparent", border: "none", color: C.textFaint,
+              fontSize: 12, cursor: "pointer", marginTop: 14, textAlign: "center",
+            }}
+          >
+            Just previewing? View the customer side instead
+          </button>
+        )}
+      </form>
+    </div>
+  );
+}
+
+function AdminAuthGate({ children, onSwitchToCustomer }) {
+  const [status, setStatus] = useState("loading"); // loading | signed_out | checking_admin | authorized | not_admin
+  const [session, setSession] = useState(null);
+  const [checkError, setCheckError] = useState("");
+
+  const checkIsPlatformAdmin = async (currentSession) => {
+    if (!currentSession) {
+      setStatus("signed_out");
+      return;
+    }
+    setStatus("checking_admin");
+    const { data, error } = await supabase
+      .from("platform_admins")
+      .select("id")
+      .eq("user_id", currentSession.user.id)
+      .maybeSingle();
+    if (error) {
+      setCheckError(error.message);
+      setStatus("not_admin");
+      return;
+    }
+    setStatus(data ? "authorized" : "not_admin");
+  };
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      checkIsPlatformAdmin(data.session);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      checkIsPlatformAdmin(newSession);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+  };
+
+  if (status === "loading" || status === "checking_admin") {
+    return (
+      <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Loader2 size={20} color={C.textFaint} style={{ animation: "spin 1s linear infinite" }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
+  if (status === "signed_out") {
+    return (
+      <AdminLogin
+        onSignedIn={(s) => { setSession(s); checkIsPlatformAdmin(s); }}
+        onSwitchToCustomer={onSwitchToCustomer}
+      />
+    );
+  }
+
+  if (status === "not_admin") {
+    return (
+      <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <style>{FONTS}</style>
+        <div style={{ textAlign: "center", maxWidth: 340 }}>
+          <Lock size={22} color={C.textFaint} style={{ marginBottom: 12 }} />
+          <p className="body-f" style={{ color: C.textHi, fontSize: 14, marginBottom: 6 }}>
+            This account isn't set up as a platform admin.
+          </p>
+          <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, marginBottom: 18 }}>
+            {checkError || "Ask an existing admin to add your user to platform_admins."}
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+            <button
+              onClick={handleSignOut}
+              className="focus-ring body-f"
+              style={{
+                background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
+                borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer",
+              }}
+            >
+              Sign out
+            </button>
+            {onSwitchToCustomer && (
+              <button
+                onClick={onSwitchToCustomer}
+                className="focus-ring body-f"
+                style={{
+                  background: "transparent", border: "none", color: C.textFaint,
+                  fontSize: 13, cursor: "pointer",
+                }}
+              >
+                View customer side instead
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // authorized
+  return children(handleSignOut, session);
 }
 
 function Placeholder({ title }) {
@@ -2056,6 +2265,63 @@ export default function BitsyBridgeDashboard() {
     return null;
   };
 
+  if (role === "admin") {
+    return (
+      <AdminAuthGate onSwitchToCustomer={() => setRole("customer")}>
+        {(handleSignOut, session) => (
+          <div style={{ background: C.bg, minHeight: "100vh", display: "flex" }}>
+            <style>{FONTS}</style>
+            <Sidebar role={role} active={active} setActive={setActive} />
+            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              <div
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: "14px 28px", borderBottom: `1px solid ${C.border}`, gap: 18,
+                }}
+              >
+                <span className="mono" style={{ fontSize: 12, color: C.textFaint }}>{session?.user?.email}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                  <span className="body-f" style={{ fontSize: 12, color: C.textFaint }}>Preview as</span>
+                  <div style={{ display: "flex", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 3 }}>
+                    {["customer", "admin"].map((r) => (
+                      <button
+                        key={r}
+                        onClick={() => setRole(r)}
+                        className="focus-ring body-f"
+                        style={{
+                          border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 12.5, fontWeight: 600,
+                          cursor: "pointer", textTransform: "capitalize",
+                          background: role === r ? C.accent : "transparent",
+                          color: role === r ? "#FFFFFF" : C.textLo,
+                        }}
+                      >
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={handleSignOut}
+                    className="focus-ring body-f"
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
+                      borderRadius: 8, padding: "6px 12px", fontSize: 12.5, cursor: "pointer",
+                    }}
+                  >
+                    <LogOut size={13} /> Sign out
+                  </button>
+                </div>
+              </div>
+              <div style={{ padding: 28, flex: 1, overflow: "auto" }}>
+                {renderMain()}
+              </div>
+            </div>
+          </div>
+        )}
+      </AdminAuthGate>
+    );
+  }
+
   return (
     <div style={{ background: C.bg, minHeight: "100vh", display: "flex" }}>
       <style>{FONTS}</style>
@@ -2067,28 +2333,26 @@ export default function BitsyBridgeDashboard() {
             padding: "14px 28px", borderBottom: `1px solid ${C.border}`, gap: 18,
           }}
         >
-          {role === "customer" && (
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span className="body-f" style={{ fontSize: 12, color: C.textFaint }}>Client user role</span>
-              <div style={{ display: "flex", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 3 }}>
-                {["admin", "staff"].map((r) => (
-                  <button
-                    key={r}
-                    onClick={() => setClientRole(r)}
-                    className="focus-ring body-f"
-                    style={{
-                      border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 12.5, fontWeight: 600,
-                      cursor: "pointer", textTransform: "capitalize",
-                      background: clientRole === r ? C.accent : "transparent",
-                      color: clientRole === r ? "#FFFFFF" : C.textLo,
-                    }}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span className="body-f" style={{ fontSize: 12, color: C.textFaint }}>Client user role</span>
+            <div style={{ display: "flex", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 3 }}>
+              {["admin", "staff"].map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setClientRole(r)}
+                  className="focus-ring body-f"
+                  style={{
+                    border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 12.5, fontWeight: 600,
+                    cursor: "pointer", textTransform: "capitalize",
+                    background: clientRole === r ? C.accent : "transparent",
+                    color: clientRole === r ? "#FFFFFF" : C.textLo,
+                  }}
+                >
+                  {r}
+                </button>
+              ))}
             </div>
-          )}
+          </div>
           <span className="body-f" style={{ fontSize: 12, color: C.textFaint }}>Preview as</span>
           <div style={{ display: "flex", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 3 }}>
             {["customer", "admin"].map((r) => (
