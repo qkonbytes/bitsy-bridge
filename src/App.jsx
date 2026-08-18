@@ -571,27 +571,103 @@ function AdminStores({ onManage }) {
 }
 
 // ---------- Admin: Connections ----------
-function AdminConnections({ store }) {
-  const [connectError, setConnectError] = useState("");
+function AdminConnections({ store, onStoreUpdated }) {
   const raw = store?.raw || {};
-  const shopDomain = raw.shopify_shop_domain || "";
+  const [shopDomain, setShopDomain] = useState(raw.shopify_shop_domain || "");
+  const [shopifyClientId, setShopifyClientId] = useState(raw.shopify_client_id || "");
+  const [shopifyClientSecret, setShopifyClientSecret] = useState("");
+  const [serviceRoleKey, setServiceRoleKey] = useState("");
+  const [savingDomain, setSavingDomain] = useState(false);
+  const [savingSecrets, setSavingSecrets] = useState(false);
+  const [connectError, setConnectError] = useState("");
+  const [saveMessage, setSaveMessage] = useState("");
 
+  const hasSecretSaved = Boolean(raw.shopify_client_secret_encrypted);
+  const hasServiceKeySaved = Boolean(raw.supabase_service_role_key_encrypted);
+
+  const cardStyle = { flex: 1, minWidth: 280, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 };
+  const labelStyle = { fontSize: 11.5, color: C.textFaint, marginBottom: 6, display: "block" };
+  const inputStyle = {
+    width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+    padding: "9px 12px", color: C.textHi, fontSize: 12.5, boxSizing: "border-box",
+  };
+  const saveBtnStyle = {
+    background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
+    borderRadius: 8, padding: "7px 14px", fontSize: 12.5, cursor: "pointer", marginTop: 4,
+    display: "flex", alignItems: "center", gap: 6,
+  };
   const maskKey = (key) => {
     if (!key) return "Not set";
     if (key.length <= 20) return key;
     return `${key.slice(0, 12)}••••••••${key.slice(-4)}`;
   };
 
-  const cardStyle = { flex: 1, minWidth: 260, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 };
-  const rowValStyle = {
-    background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6,
-    padding: "8px 10px", color: C.textHi, fontSize: 12.5,
+  const saveShopDomain = async () => {
+    setSavingDomain(true);
+    setSaveMessage("");
+    const { error } = await supabase
+      .from("clients")
+      .update({ shopify_shop_domain: shopDomain.trim(), shopify_client_id: shopifyClientId.trim() || null })
+      .eq("id", store.id);
+    setSavingDomain(false);
+    if (error) {
+      setSaveMessage(`Error: ${error.message}`);
+    } else {
+      setSaveMessage("Saved.");
+      onStoreUpdated?.();
+    }
   };
-  const NotWiredNote = () => (
-    <p className="body-f" style={{ color: C.textFaint, fontSize: 11.5, fontStyle: "italic", margin: "8px 0 0 0" }}>
-      Not wired to live data yet — reading this needs a secure server-side lookup (not built), since admin sessions don't have direct access to a client's own project.
-    </p>
-  );
+
+  const saveSecrets = async () => {
+    if (!shopifyClientSecret && !serviceRoleKey) {
+      setSaveMessage("Enter at least one secret to save.");
+      return;
+    }
+    setSavingSecrets(true);
+    setSaveMessage("");
+    const { data: sessionData } = await supabase.auth.getSession();
+    const { data, error } = await supabase.functions.invoke("save-client-secrets", {
+      body: {
+        client_id: store.id,
+        shopify_client_secret: shopifyClientSecret || undefined,
+        supabase_service_role_key: serviceRoleKey || undefined,
+      },
+      headers: { Authorization: `Bearer ${sessionData?.session?.access_token}` },
+    });
+    setSavingSecrets(false);
+    if (error || data?.error) {
+      setSaveMessage(`Error: ${error?.message || data?.error}`);
+    } else {
+      setSaveMessage("Secrets saved and encrypted.");
+      setShopifyClientSecret("");
+      setServiceRoleKey("");
+      onStoreUpdated?.();
+    }
+  };
+
+  const handleConnect = () => {
+    if (!shopDomain.trim()) {
+      setConnectError("Enter and save a shop domain first.");
+      return;
+    }
+    if (!shopifyClientId.trim()) {
+      setConnectError("Enter and save a Shopify Client ID first.");
+      return;
+    }
+    if (!hasSecretSaved) {
+      setConnectError("No Shopify Client Secret saved yet — save it below first.");
+      return;
+    }
+    try {
+      setConnectError("");
+      window.location.href = buildShopifyAuthUrl(shopDomain, {
+        shopifyClientId: shopifyClientId.trim(),
+        internalClientId: store.id,
+      });
+    } catch (err) {
+      setConnectError(err.message);
+    }
+  };
 
   return (
     <div>
@@ -599,67 +675,75 @@ function AdminConnections({ store }) {
         Connections
       </h1>
       <p className="body-f" style={{ color: C.textLo, fontSize: 13, margin: "0 0 24px 0" }}>
-        Configure this client's ERP source, Shopify credentials, and Supabase connection.
+        Each client has their own Shopify app, registered by us against their store — set it up here, once, per client.
       </p>
 
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
         <div style={cardStyle}>
-          <div className="disp" style={{ color: C.textHi, fontSize: 14, fontWeight: 600, marginBottom: 14 }}>
+          <div className="disp" style={{ color: C.textHi, fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
             ERP source — {store?.name}
           </div>
-          <div className="body-f" style={{ color: C.textFaint, fontSize: 12.5 }}>
-            Set from the client's own Settings page once their local agent is configured.
-          </div>
-          <NotWiredNote />
+          <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, marginTop: 10 }}>
+            Set from the client's own local agent config, not from here — not wired to live data yet.
+          </p>
         </div>
 
         <div style={cardStyle}>
           <div className="disp" style={{ color: C.textHi, fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
             Shopify store
           </div>
-          <p className="body-f" style={{ color: C.textFaint, fontSize: 11.5, margin: "0 0 12px 0" }}>
-            Authorized via OAuth — no manual token entry.
+          <p className="body-f" style={{ color: C.textFaint, fontSize: 11.5, margin: "0 0 14px 0" }}>
+            This client's own app, registered in the Dev Dashboard against their store domain.
           </p>
-          {shopDomain ? (
-            <div style={{ marginBottom: 12 }}>
-              <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 4 }}>Shop domain (from registry)</div>
-              <div className="mono" style={rowValStyle}>{shopDomain}</div>
-            </div>
-          ) : (
-            <div className="body-f" style={{ color: C.textFaint, fontSize: 12.5, marginBottom: 12 }}>
-              No shop domain on file for this client yet.
-            </div>
-          )}
-          <NotWiredNote />
-          <button
-            onClick={() => {
-              if (!shopDomain) {
-                setConnectError("No shop domain on file for this client — set one from their Settings page first.");
-                return;
-              }
-              try {
-                setConnectError("");
-                window.location.href = buildShopifyAuthUrl(shopDomain);
-              } catch (err) {
-                setConnectError(err.message);
-              }
-            }}
-            className="focus-ring body-f"
-            style={{
-              background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
-              borderRadius: 8, padding: "8px 14px", fontSize: 12.5, cursor: "pointer", marginTop: 12,
-            }}
-          >
-            Reconnect Shopify
+
+          <label className="body-f" style={labelStyle}>Shop domain</label>
+          <input
+            value={shopDomain}
+            onChange={(e) => setShopDomain(e.target.value)}
+            className="focus-ring mono"
+            style={{ ...inputStyle, marginBottom: 12 }}
+            placeholder="their-store.myshopify.com"
+          />
+
+          <label className="body-f" style={labelStyle}>Shopify Client ID</label>
+          <input
+            value={shopifyClientId}
+            onChange={(e) => setShopifyClientId(e.target.value)}
+            className="focus-ring mono"
+            style={{ ...inputStyle, marginBottom: 8 }}
+            placeholder="from Dev Dashboard → Credentials"
+          />
+          <button onClick={saveShopDomain} disabled={savingDomain} className="focus-ring body-f" style={saveBtnStyle}>
+            <Check size={12} /> {savingDomain ? "Saving…" : "Save domain & Client ID"}
           </button>
-          <p className="body-f" style={{ color: C.textFaint, fontSize: 11, margin: "8px 0 0 0" }}>
-            Note: connecting from here won't currently save the token — admin sessions aren't authenticated against the client's own project. Use this only to test the redirect; real connects happen from the client's own Settings page.
-          </p>
+
+          <div style={{ height: 16 }} />
+          <label className="body-f" style={labelStyle}>
+            Shopify Client Secret {hasSecretSaved && <span style={{ color: C.success }}>· saved</span>}
+          </label>
+          <input
+            type="password"
+            value={shopifyClientSecret}
+            onChange={(e) => setShopifyClientSecret(e.target.value)}
+            className="focus-ring mono"
+            style={{ ...inputStyle, marginBottom: 8 }}
+            placeholder={hasSecretSaved ? "•••••••• (enter to replace)" : "from Dev Dashboard → Credentials"}
+          />
+
+          <div style={{ height: 4 }} />
+          <button onClick={handleConnect} className="focus-ring body-f" style={{ ...saveBtnStyle, background: C.accent, color: "#FFFFFF", border: "none" }}>
+            Connect Shopify
+          </button>
           {connectError && (
             <div className="body-f" style={{ color: C.error, fontSize: 12, marginTop: 10, background: C.errorDim, padding: "7px 10px", borderRadius: 6 }}>
               {connectError}
             </div>
           )}
+          {raw.shopify_connected_at ? (
+            <p className="body-f" style={{ color: C.success, fontSize: 11.5, marginTop: 10 }}>
+              Connected — token saved in this client's own project.
+            </p>
+          ) : null}
         </div>
 
         <div style={cardStyle}>
@@ -667,19 +751,39 @@ function AdminConnections({ store }) {
             <Database size={15} color={C.accent} /> Supabase connection
           </div>
           <p className="body-f" style={{ color: C.textFaint, fontSize: 11.5, margin: "0 0 12px 0" }}>
-            This client's own project, from the control-plane registry.
+            This client's own project.
           </p>
           <div style={{ marginBottom: 12 }}>
-            <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 4 }}>Project URL</div>
-            <div className="mono" style={rowValStyle}>{raw.supabase_url || "Not set"}</div>
+            <div className="body-f" style={labelStyle}>Project URL</div>
+            <div className="mono" style={{ ...inputStyle }}>{raw.supabase_url || "Not set"}</div>
           </div>
           <div style={{ marginBottom: 12 }}>
-            <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 4 }}>Anon key</div>
-            <div className="mono" style={rowValStyle}>{maskKey(raw.anon_key)}</div>
+            <div className="body-f" style={labelStyle}>Anon key</div>
+            <div className="mono" style={{ ...inputStyle }}>{maskKey(raw.anon_key)}</div>
           </div>
-          <p className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginTop: 4 }}>
-            Local-agent device tokens aren't implemented yet — that comes with the local PC agent build.
+
+          <label className="body-f" style={labelStyle}>
+            Service role key {hasServiceKeySaved && <span style={{ color: C.success }}>· saved</span>}
+          </label>
+          <p className="body-f" style={{ color: C.textFaint, fontSize: 11, margin: "0 0 6px 0" }}>
+            From this client's project → Settings → API. Needed so the sync engine can write into their project.
           </p>
+          <input
+            type="password"
+            value={serviceRoleKey}
+            onChange={(e) => setServiceRoleKey(e.target.value)}
+            className="focus-ring mono"
+            style={{ ...inputStyle, marginBottom: 8 }}
+            placeholder={hasServiceKeySaved ? "•••••••• (enter to replace)" : "eyJ..."}
+          />
+          <button onClick={saveSecrets} disabled={savingSecrets} className="focus-ring body-f" style={saveBtnStyle}>
+            <Check size={12} /> {savingSecrets ? "Saving…" : "Save secrets"}
+          </button>
+          {saveMessage && (
+            <p className="body-f" style={{ color: saveMessage.startsWith("Error") ? C.error : C.success, fontSize: 11.5, marginTop: 8 }}>
+              {saveMessage}
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -1927,10 +2031,8 @@ function CustomerSettings({ clientRole = "admin", projectInfo = null }) {
                   className="focus-ring mono"
                   style={inputStyle}
                   placeholder="your-store.myshopify.com"
+                  disabled
                 />
-                <button className="focus-ring body-f" style={{ ...saveBtn, marginTop: 0 }}>
-                  <Check size={14} /> Save
-                </button>
               </div>
               <label className="body-f" style={labelStyle}>Connection status</label>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1943,32 +2045,10 @@ function CustomerSettings({ clientRole = "admin", projectInfo = null }) {
                 >
                   Not connected
                 </span>
-                <button
-                  onClick={() => {
-                    if (!shopUrl.trim()) {
-                      setConnectError("Enter your shop domain first.");
-                      return;
-                    }
-                    if (!projectInfo) {
-                      setConnectError("No real client project connected — this only works when logged in with a real account, not preview mode.");
-                      return;
-                    }
-                    try {
-                      setConnectError("");
-                      window.location.href = buildShopifyAuthUrl(shopUrl, projectInfo);
-                    } catch (err) {
-                      setConnectError(err.message);
-                    }
-                  }}
-                  className="focus-ring body-f"
-                  style={{
-                    background: C.accent, border: "none", color: "#FFFFFF",
-                    borderRadius: 8, padding: "7px 14px", fontSize: 12.5, cursor: "pointer",
-                  }}
-                >
-                  Connect Shopify
-                </button>
               </div>
+              <p className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginTop: 10 }}>
+                Your Shopify connection is set up by your account admin at Q-KON Bytes — reach out to enquiries@qkonbytes.com to get connected.
+              </p>
               {connectError && (
                 <div className="body-f" style={{ color: C.error, fontSize: 12, marginTop: 10, background: C.errorDim, padding: "7px 10px", borderRadius: 6 }}>
                   {connectError}

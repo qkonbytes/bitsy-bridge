@@ -1,24 +1,22 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { createClient } from "@supabase/supabase-js";
 import { Check, AlertTriangle, ArrowRightLeft, Loader2 } from "lucide-react";
 import { C, FONTS } from "./App.jsx";
 import { supabase as controlPlaneSupabase } from "./lib/supabaseClient.js";
 
-// Shopify redirects here after the merchant (or store owner, on a dev store)
-// approves the consent screen. This page:
-//  1. Validates the redirect is genuine (state match, matches what we sent)
-//  2. Calls the control-plane Edge Function to exchange the code for a token
-//     (that step needs the Shopify Client Secret, which only exists server-side)
-//  3. Saves the resulting token into the correct CLIENT project's own
-//     settings table — using that project's already-persisted login session,
-//     never the control plane's credentials.
+// Shopify redirects here after the consent screen is approved. Everything
+// past validating the redirect itself now happens server-side in the
+// shopify-token-exchange Edge Function — it looks up this client's own
+// Shopify app credentials, does the exchange, and saves the resulting token
+// directly into that client's own project. This page just calls it and
+// reports the result.
 
 export default function OAuthCallback() {
   const [status, setStatus] = useState("checking");
-  // checking | exchanging | saving | done | state_mismatch | shopify_error | missing_code | exchange_failed | no_target
+  // checking | exchanging | done | state_mismatch | shopify_error | missing_code | no_client | exchange_failed
 
   const [errorDetail, setErrorDetail] = useState("");
+  const [shopDisplay, setShopDisplay] = useState("");
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
   const shop = params.get("shop");
@@ -45,49 +43,24 @@ export default function OAuthCallback() {
         return;
       }
 
-      const targetProjectRaw = sessionStorage.getItem("shopify_oauth_target_project");
+      const internalClientId = sessionStorage.getItem("shopify_oauth_internal_client_id");
       sessionStorage.removeItem("shopify_oauth_state");
       sessionStorage.removeItem("shopify_oauth_shop");
-      sessionStorage.removeItem("shopify_oauth_target_project");
+      sessionStorage.removeItem("shopify_oauth_internal_client_id");
 
-      if (!targetProjectRaw) {
-        setStatus("no_target");
+      if (!internalClientId) {
+        setStatus("no_client");
         return;
       }
-      const targetProject = JSON.parse(targetProjectRaw);
 
+      setShopDisplay(shop);
       setStatus("exchanging");
       const { data, error } = await controlPlaneSupabase.functions.invoke("shopify-token-exchange", {
-        body: { code, shop, hmac, timestamp, host, state: returnedState },
+        body: { code, shop, hmac, timestamp, host, state: returnedState, internal_client_id: internalClientId },
       });
 
       if (error || data?.error) {
         setErrorDetail(error?.message || data?.error || "Unknown error");
-        setStatus("exchange_failed");
-        return;
-      }
-
-      setStatus("saving");
-      // This client is pointed at the SAME project the user was already logged
-      // into before the redirect, so it picks up their persisted session —
-      // no separate re-authentication needed.
-      const clientSupabase = createClient(targetProject.url, targetProject.anonKey);
-      const { data: existing } = await clientSupabase.from("settings").select("id").limit(1).maybeSingle();
-
-      const updatePayload = {
-        shopify_connected: true,
-        shopify_shop_domain: shop,
-        shopify_access_token: data.access_token,
-        shopify_scope: data.scope,
-        shopify_connected_at: new Date().toISOString(),
-      };
-
-      const { error: saveError } = existing
-        ? await clientSupabase.from("settings").update(updatePayload).eq("id", existing.id)
-        : await clientSupabase.from("settings").insert(updatePayload);
-
-      if (saveError) {
-        setErrorDetail(saveError.message);
         setStatus("exchange_failed");
         return;
       }
@@ -98,9 +71,7 @@ export default function OAuthCallback() {
     run();
   }, []);
 
-  const cardStyle = {
-    width: 420, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 28,
-  };
+  const cardStyle = { width: 420, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 28 };
 
   const Shell = ({ children }) => (
     <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -126,10 +97,8 @@ export default function OAuthCallback() {
     </Shell>
   );
 
-  if (status === "checking" || status === "exchanging" || status === "saving") {
-    const label = status === "exchanging" ? "Exchanging authorization for an access token…"
-      : status === "saving" ? "Saving connection…"
-      : "Checking response from Shopify…";
+  if (status === "checking" || status === "exchanging") {
+    const label = status === "exchanging" ? "Exchanging authorization and saving the connection…" : "Checking response from Shopify…";
     return (
       <Shell>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -142,9 +111,9 @@ export default function OAuthCallback() {
   }
 
   if (status === "shopify_error") return <ErrorScreen title="Shopify declined the request" detail={shopifyError} />;
-  if (status === "missing_code") return <ErrorScreen title="No authorization code received" detail="This page is only meant to be reached via a Shopify redirect — try connecting again from Settings." />;
+  if (status === "missing_code") return <ErrorScreen title="No authorization code received" detail="This page is only meant to be reached via a Shopify redirect." />;
   if (status === "state_mismatch") return <ErrorScreen title="This authorization couldn't be verified" detail="The security check on this redirect didn't match. Try connecting again." />;
-  if (status === "no_target") return <ErrorScreen title="No client project to save this into" detail="This connect flow wasn't started from a real logged-in session, so there's nowhere to save the resulting token." />;
+  if (status === "no_client") return <ErrorScreen title="No client reference found" detail="This connect flow wasn't started correctly — try again from Connections." />;
   if (status === "exchange_failed") return <ErrorScreen title="Couldn't complete the connection" detail={errorDetail} />;
 
   // done
@@ -154,14 +123,11 @@ export default function OAuthCallback() {
         <Check size={18} color={C.success} />
         <p className="body-f" style={{ color: C.textHi, fontSize: 14 }}>Shopify connected</p>
       </div>
-      <div
-        className="mono"
-        style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 12.5, color: C.textHi, marginBottom: 14 }}
-      >
-        {shop}
+      <div className="mono" style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 12.5, color: C.textHi, marginBottom: 14 }}>
+        {shopDisplay}
       </div>
       <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, marginBottom: 18 }}>
-        The access token was saved to this store's project. You can head back and check the Connections/Settings page.
+        The access token was saved directly to this store's own project.
       </p>
       <Link to="/" className="body-f" style={{ color: C.accent, fontSize: 13 }}>← Back to bitsy_bridge</Link>
     </Shell>
