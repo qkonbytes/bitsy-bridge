@@ -1217,8 +1217,10 @@ function PasswordStep({ email, label, authClient, onSignedIn, onBack }) {
 }
 
 // ---------- The single auth gate. Login determines everything from here — no manual role toggles. ----------
+const SESSION_MARKER_KEY = "bitsy_bridge_session";
+
 function AuthGate({ children, onPreview }) {
-  const [step, setStep] = useState("email"); // email | password | authorized | not_found | not_admin
+  const [step, setStep] = useState("restoring"); // restoring | email | password | authorized | not_found | not_admin
   const [email, setEmail] = useState("");
   const [accountType, setAccountType] = useState(null); // "admin" | "customer"
   const [resolved, setResolved] = useState(null);        // customer project info; null for admin
@@ -1226,15 +1228,60 @@ function AuthGate({ children, onPreview }) {
   const [session, setSession] = useState(null);
   const [notAdminError, setNotAdminError] = useState("");
 
+  // On mount, try to restore an existing session rather than always
+  // showing the login screen — otherwise every page refresh looks
+  // identical to a brand new visit, even with a valid session saved.
+  useEffect(() => {
+    const restore = async () => {
+      const markerRaw = localStorage.getItem(SESSION_MARKER_KEY);
+      if (!markerRaw) {
+        setStep("email");
+        return;
+      }
+      const marker = JSON.parse(markerRaw);
+      const client = marker.account_type === "admin" ? supabase : createClient(marker.supabase_url, marker.anon_key);
+      const { data } = await client.auth.getSession();
+
+      if (!data?.session) {
+        localStorage.removeItem(SESSION_MARKER_KEY);
+        setStep("email");
+        return;
+      }
+
+      setAccountType(marker.account_type);
+      setAuthClient(client);
+      if (marker.account_type === "customer") setResolved(marker);
+
+      if (marker.account_type === "admin") {
+        const { data: adminRow, error } = await supabase
+          .from("platform_admins")
+          .select("id")
+          .eq("user_id", data.session.user.id)
+          .maybeSingle();
+        if (error || !adminRow) {
+          setNotAdminError(error?.message || "");
+          setStep("not_admin");
+          return;
+        }
+      }
+
+      setSession(data.session);
+      setStep("authorized");
+    };
+    restore();
+  }, []);
+
   const handleResolved = (enteredEmail, match) => {
     setEmail(enteredEmail);
     setAccountType(match.account_type);
     if (match.account_type === "admin") {
       setAuthClient(supabase); // the static control-plane client
       setResolved(null);
+      localStorage.setItem(SESSION_MARKER_KEY, JSON.stringify({ account_type: "admin" }));
     } else {
       setResolved(match);
       setAuthClient(createClient(match.supabase_url, match.anon_key));
+      localStorage.setItem(SESSION_MARKER_KEY, JSON.stringify(match));
     }
     setStep("password");
   };
@@ -1263,6 +1310,7 @@ function AuthGate({ children, onPreview }) {
   };
 
   const resetToEmail = () => {
+    localStorage.removeItem(SESSION_MARKER_KEY);
     setStep("email");
     setEmail("");
     setAccountType(null);
@@ -1275,6 +1323,16 @@ function AuthGate({ children, onPreview }) {
     if (authClient) await authClient.auth.signOut();
     resetToEmail();
   };
+
+  if (step === "restoring") {
+    return (
+      <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <style>{FONTS}</style>
+        <Loader2 size={20} color={C.textFaint} style={{ animation: "spin 1s linear infinite" }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
 
   if (step === "email") {
     return <UnifiedLogin onResolved={handleResolved} onNotFound={handleNotFound} onSkip={onPreview} />;
