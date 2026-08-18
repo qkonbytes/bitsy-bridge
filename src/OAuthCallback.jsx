@@ -60,7 +60,19 @@ export default function OAuthCallback() {
       });
 
       if (error || data?.error) {
-        setErrorDetail(error?.message || data?.error || "Unknown error");
+        // supabase-js hides the actual error body by default on a non-2xx
+        // response (error.message is just a generic "non-2xx status code")
+        // — the real message our function sent has to be read from error.context.
+        let detail = error?.message || data?.error || "Unknown error";
+        if (error?.context) {
+          try {
+            const body = await error.context.json();
+            if (body?.error) detail = body.error;
+          } catch {
+            // context wasn't JSON — fall back to the generic message above
+          }
+        }
+        setErrorDetail(detail);
         setStatus("exchange_failed");
         return;
       }
