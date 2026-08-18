@@ -1770,7 +1770,7 @@ function Toggle({ checked, onChange }) {
 }
 
 // ---------- Customer: Settings ----------
-function CustomerSettings({ clientRole = "admin" }) {
+function CustomerSettings({ clientRole = "admin", projectInfo = null }) {
   const [interval_, setInterval_] = useState("30 min");
   const [paused, setPaused] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -1963,9 +1963,13 @@ function CustomerSettings({ clientRole = "admin" }) {
                       setConnectError("Enter your shop domain first.");
                       return;
                     }
+                    if (!projectInfo) {
+                      setConnectError("No real client project connected — this only works when logged in with a real account, not preview mode.");
+                      return;
+                    }
                     try {
                       setConnectError("");
-                      window.location.href = buildShopifyAuthUrl(shopUrl);
+                      window.location.href = buildShopifyAuthUrl(shopUrl, projectInfo);
                     } catch (err) {
                       setConnectError(err.message);
                     }
@@ -2470,13 +2474,13 @@ export default function BitsyBridgeDashboard() {
     return null;
   };
 
-  const customerRenderMain = (clientRole) => {
+  const customerRenderMain = (clientRole, projectInfo) => {
     if (customerActive === "dashboard") return <CustomerDashboard />;
     if (customerActive === "shopifydb") return <CustomerShopifyDB />;
     if (customerActive === "erpdb") return <CustomerERPDB />;
     if (customerActive === "notmatched") return <CustomerNotMatched />;
     if (customerActive === "history") return <CustomerHistory />;
-    if (customerActive === "settings") return <CustomerSettings clientRole={clientRole} />;
+    if (customerActive === "settings") return <CustomerSettings clientRole={clientRole} projectInfo={projectInfo} />;
     return null;
   };
 
@@ -2515,7 +2519,7 @@ export default function BitsyBridgeDashboard() {
     </div>
   );
 
-  const CustomerShell = ({ session, onSignOut, clientRole, storeName, preview }) => (
+  const CustomerShell = ({ session, onSignOut, clientRole, storeName, resolved, preview }) => (
     <div style={{ background: C.bg, minHeight: "100vh", display: "flex" }}>
       <style>{FONTS}</style>
       <Sidebar role="customer" active={customerActive} setActive={setCustomerActive} />
@@ -2551,7 +2555,7 @@ export default function BitsyBridgeDashboard() {
           )}
         </div>
         <div style={{ padding: 28, flex: 1, overflow: "auto" }}>
-          {customerRenderMain(clientRole)}
+          {customerRenderMain(clientRole, resolved ? { url: resolved.supabase_url, anonKey: resolved.anon_key } : null)}
         </div>
       </div>
     </div>
@@ -2572,6 +2576,7 @@ export default function BitsyBridgeDashboard() {
             onSignOut={handleSignOut}
             clientRole={resolved?.client_role || "staff"}
             storeName={resolved?.client_name}
+            resolved={resolved}
           />
         )
       }
