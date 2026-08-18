@@ -571,9 +571,27 @@ function AdminStores({ onManage }) {
 }
 
 // ---------- Admin: Connections ----------
-function AdminConnections({ store = MOCK_STORES[1].name }) {
+function AdminConnections({ store }) {
   const [connectError, setConnectError] = useState("");
-  const shopDomain = "coastal-supply.myshopify.com"; // TODO: pull from this store's real settings row once wired to Supabase
+  const raw = store?.raw || {};
+  const shopDomain = raw.shopify_shop_domain || "";
+
+  const maskKey = (key) => {
+    if (!key) return "Not set";
+    if (key.length <= 20) return key;
+    return `${key.slice(0, 12)}••••••••${key.slice(-4)}`;
+  };
+
+  const cardStyle = { flex: 1, minWidth: 260, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 };
+  const rowValStyle = {
+    background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6,
+    padding: "8px 10px", color: C.textHi, fontSize: 12.5,
+  };
+  const NotWiredNote = () => (
+    <p className="body-f" style={{ color: C.textFaint, fontSize: 11.5, fontStyle: "italic", margin: "8px 0 0 0" }}>
+      Not wired to live data yet — reading this needs a secure server-side lookup (not built), since admin sessions don't have direct access to a client's own project.
+    </p>
+  );
 
   return (
     <div>
@@ -585,59 +603,40 @@ function AdminConnections({ store = MOCK_STORES[1].name }) {
       </p>
 
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 260, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
+        <div style={cardStyle}>
           <div className="disp" style={{ color: C.textHi, fontSize: 14, fontWeight: 600, marginBottom: 14 }}>
-            ERP source — {store}
+            ERP source — {store?.name}
           </div>
-          {[
-            ["Connector type", "MS Access (.accdb)"],
-            ["Host / file path", "//coastal-srv/data/inventory.accdb"],
-            ["Field mapping", "3 fields mapped"],
-          ].map(([label, val]) => (
-            <div key={label} style={{ marginBottom: 12 }}>
-              <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 4 }}>{label}</div>
-              <div
-                className="mono"
-                style={{
-                  background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6,
-                  padding: "8px 10px", color: C.textHi, fontSize: 12.5,
-                }}
-              >
-                {val}
-              </div>
-            </div>
-          ))}
+          <div className="body-f" style={{ color: C.textFaint, fontSize: 12.5 }}>
+            Set from the client's own Settings page once their local agent is configured.
+          </div>
+          <NotWiredNote />
         </div>
 
-        <div style={{ flex: 1, minWidth: 260, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
+        <div style={cardStyle}>
           <div className="disp" style={{ color: C.textHi, fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
             Shopify store
           </div>
           <p className="body-f" style={{ color: C.textFaint, fontSize: 11.5, margin: "0 0 12px 0" }}>
             Authorized via OAuth — no manual token entry.
           </p>
-          {[
-            ["Shop domain", shopDomain],
-            ["Connection status", "Connected"],
-            ["Scopes granted", "read/write_products, read/write_inventory, read_locations"],
-            ["Connected on", "3 Aug 2026"],
-            ["Token status", "Active — auto-refreshed"],
-          ].map(([label, val]) => (
-            <div key={label} style={{ marginBottom: 12 }}>
-              <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 4 }}>{label}</div>
-              <div
-                className="mono"
-                style={{
-                  background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6,
-                  padding: "8px 10px", color: C.textHi, fontSize: 12.5,
-                }}
-              >
-                {val}
-              </div>
+          {shopDomain ? (
+            <div style={{ marginBottom: 12 }}>
+              <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 4 }}>Shop domain (from registry)</div>
+              <div className="mono" style={rowValStyle}>{shopDomain}</div>
             </div>
-          ))}
+          ) : (
+            <div className="body-f" style={{ color: C.textFaint, fontSize: 12.5, marginBottom: 12 }}>
+              No shop domain on file for this client yet.
+            </div>
+          )}
+          <NotWiredNote />
           <button
             onClick={() => {
+              if (!shopDomain) {
+                setConnectError("No shop domain on file for this client — set one from their Settings page first.");
+                return;
+              }
               try {
                 setConnectError("");
                 window.location.href = buildShopifyAuthUrl(shopDomain);
@@ -648,11 +647,14 @@ function AdminConnections({ store = MOCK_STORES[1].name }) {
             className="focus-ring body-f"
             style={{
               background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
-              borderRadius: 8, padding: "8px 14px", fontSize: 12.5, cursor: "pointer", marginTop: 4,
+              borderRadius: 8, padding: "8px 14px", fontSize: 12.5, cursor: "pointer", marginTop: 12,
             }}
           >
             Reconnect Shopify
           </button>
+          <p className="body-f" style={{ color: C.textFaint, fontSize: 11, margin: "8px 0 0 0" }}>
+            Note: connecting from here won't currently save the token — admin sessions aren't authenticated against the client's own project. Use this only to test the redirect; real connects happen from the client's own Settings page.
+          </p>
           {connectError && (
             <div className="body-f" style={{ color: C.error, fontSize: 12, marginTop: 10, background: C.errorDim, padding: "7px 10px", borderRadius: 6 }}>
               {connectError}
@@ -660,40 +662,24 @@ function AdminConnections({ store = MOCK_STORES[1].name }) {
           )}
         </div>
 
-        <div style={{ flex: 1, minWidth: 260, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
+        <div style={cardStyle}>
           <div className="disp" style={{ color: C.textHi, fontSize: 14, fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
             <Database size={15} color={C.accent} /> Supabase connection
           </div>
           <p className="body-f" style={{ color: C.textFaint, fontSize: 11.5, margin: "0 0 12px 0" }}>
-            Used by this client's local agent to push data to the cloud DB.
+            This client's own project, from the control-plane registry.
           </p>
-          {[
-            ["Project URL", "https://bitsybridge.supabase.co"],
-            ["Anon key", "eyJhbGciOi••••••••••••8kq2"],
-            ["Store API key (device token)", "sbk_live_coastal_••••••••7f1a"],
-          ].map(([label, val]) => (
-            <div key={label} style={{ marginBottom: 12 }}>
-              <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 4 }}>{label}</div>
-              <div
-                className="mono"
-                style={{
-                  background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6,
-                  padding: "8px 10px", color: C.textHi, fontSize: 12.5,
-                }}
-              >
-                {val}
-              </div>
-            </div>
-          ))}
-          <button
-            className="focus-ring body-f"
-            style={{
-              background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
-              borderRadius: 8, padding: "8px 14px", fontSize: 12.5, cursor: "pointer", marginTop: 4,
-            }}
-          >
-            Regenerate device token
-          </button>
+          <div style={{ marginBottom: 12 }}>
+            <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 4 }}>Project URL</div>
+            <div className="mono" style={rowValStyle}>{raw.supabase_url || "Not set"}</div>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 4 }}>Anon key</div>
+            <div className="mono" style={rowValStyle}>{maskKey(raw.anon_key)}</div>
+          </div>
+          <p className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginTop: 4 }}>
+            Local-agent device tokens aren't implemented yet — that comes with the local PC agent build.
+          </p>
         </div>
       </div>
     </div>
@@ -1597,7 +1583,7 @@ function StoreDetail({ store, onBack }) {
       {tab === "notmatched" && <NotMatched store={store} />}
       {tab === "history" && <CustomerHistory storeName={store.name} />}
       {tab === "logs" && <AdminLogs fixedStore={store.name} />}
-      {tab === "connections" && <AdminConnections store={store.name} />}
+      {tab === "connections" && <AdminConnections store={store} />}
       {tab === "locations" && <LocationMapping store={store} />}
     </div>
   );
