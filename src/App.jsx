@@ -636,8 +636,8 @@ function AdminConnections({ store, onStoreUpdated }) {
     const { data, error } = await supabase.functions.invoke("save-client-secrets", {
       body: {
         client_id: store.id,
-        shopify_client_secret: shopifyClientSecret || undefined,
-        supabase_service_role_key: serviceRoleKey || undefined,
+        shopify_client_secret: shopifyClientSecret.trim() || undefined,
+        supabase_service_role_key: serviceRoleKey.trim() || undefined,
       },
       headers: { Authorization: `Bearer ${sessionData?.session?.access_token}` },
     });
