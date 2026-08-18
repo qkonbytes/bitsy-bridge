@@ -572,7 +572,8 @@ function AdminStores({ onManage }) {
 
 // ---------- Admin: Connections ----------
 function AdminConnections({ store, onStoreUpdated }) {
-  const raw = store?.raw || {};
+  const [liveRaw, setLiveRaw] = useState(store?.raw || {});
+  const raw = liveRaw;
   const [shopDomain, setShopDomain] = useState(raw.shopify_shop_domain || "");
   const [shopifyClientId, setShopifyClientId] = useState(raw.shopify_client_id || "");
   const [shopifyClientSecret, setShopifyClientSecret] = useState("");
@@ -581,6 +582,11 @@ function AdminConnections({ store, onStoreUpdated }) {
   const [savingSecrets, setSavingSecrets] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
+
+  const refetchClient = async () => {
+    const { data, error } = await supabase.from("clients").select("*").eq("id", store.id).maybeSingle();
+    if (!error && data) setLiveRaw(data);
+  };
 
   const hasSecretSaved = Boolean(raw.shopify_client_secret_encrypted);
   const hasServiceKeySaved = Boolean(raw.supabase_service_role_key_encrypted);
@@ -614,6 +620,7 @@ function AdminConnections({ store, onStoreUpdated }) {
       setSaveMessage(`Error: ${error.message}`);
     } else {
       setSaveMessage("Saved.");
+      await refetchClient();
       onStoreUpdated?.();
     }
   };
@@ -641,6 +648,7 @@ function AdminConnections({ store, onStoreUpdated }) {
       setSaveMessage("Secrets saved and encrypted.");
       setShopifyClientSecret("");
       setServiceRoleKey("");
+      await refetchClient();
       onStoreUpdated?.();
     }
   };
