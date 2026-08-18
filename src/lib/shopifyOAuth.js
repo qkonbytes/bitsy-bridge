@@ -12,7 +12,7 @@ const SHOPIFY_SCOPES = [
   "read_locations",
 ].join(",");
 
-export function buildShopifyAuthUrl(shopDomain) {
+export function buildShopifyAuthUrl(shopDomain, targetProject) {
   const clientId = import.meta.env.VITE_SHOPIFY_CLIENT_ID;
   const redirectUri = import.meta.env.VITE_SHOPIFY_REDIRECT_URI || `${window.location.origin}/oauth/callback`;
 
@@ -30,6 +30,19 @@ export function buildShopifyAuthUrl(shopDomain) {
   const state = crypto.randomUUID();
   sessionStorage.setItem("shopify_oauth_state", state);
   sessionStorage.setItem("shopify_oauth_shop", cleanShop);
+
+  // The browser does a full page navigation to Shopify and back, so any
+  // React state is gone by the time /oauth/callback runs. We stash which
+  // client project the resulting token belongs to here, so the callback
+  // knows where to save it once the exchange completes.
+  if (targetProject?.url && targetProject?.anonKey) {
+    sessionStorage.setItem(
+      "shopify_oauth_target_project",
+      JSON.stringify({ url: targetProject.url, anonKey: targetProject.anonKey })
+    );
+  } else {
+    sessionStorage.removeItem("shopify_oauth_target_project");
+  }
 
   const params = new URLSearchParams({
     client_id: clientId,
