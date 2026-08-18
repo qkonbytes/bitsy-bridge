@@ -643,7 +643,16 @@ function AdminConnections({ store, onStoreUpdated }) {
     });
     setSavingSecrets(false);
     if (error || data?.error) {
-      setSaveMessage(`Error: ${error?.message || data?.error}`);
+      let detail = error?.message || data?.error || "Unknown error";
+      if (error?.context) {
+        try {
+          const body = await error.context.json();
+          if (body?.error) detail = body.error;
+        } catch {
+          // context wasn't JSON — fall back to the generic message above
+        }
+      }
+      setSaveMessage(`Error: ${detail}`);
     } else {
       setSaveMessage("Secrets saved and encrypted.");
       setShopifyClientSecret("");
