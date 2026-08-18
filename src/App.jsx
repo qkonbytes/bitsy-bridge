@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { supabase, isSupabaseConfigured } from "./lib/supabaseClient";
 import { createClient } from "@supabase/supabase-js";
+import { buildShopifyAuthUrl } from "./lib/shopifyOAuth";
 import {
   LayoutGrid,
   Activity,
@@ -29,7 +30,7 @@ import {
 } from "lucide-react";
 
 // ---------- Design tokens ----------
-const C = {
+export const C = {
   bg: "#10141B",
   surface: "#171C25",
   surfaceHover: "#1D2430",
@@ -46,7 +47,7 @@ const C = {
   errorDim: "rgba(248,113,113,0.12)",
 };
 
-const FONTS = `
+export const FONTS = `
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 * { box-sizing: border-box; }
 .disp { font-family: 'Space Grotesk', sans-serif; }
@@ -493,6 +494,9 @@ function AdminStores({ onManage }) {
 
 // ---------- Admin: Connections ----------
 function AdminConnections({ store = MOCK_STORES[1].name }) {
+  const [connectError, setConnectError] = useState("");
+  const shopDomain = "coastal-supply.myshopify.com"; // TODO: pull from this store's real settings row once wired to Supabase
+
   return (
     <div>
       <h1 className="disp" style={{ color: C.textHi, fontSize: 22, fontWeight: 700, margin: "0 0 4px 0" }}>
@@ -535,7 +539,7 @@ function AdminConnections({ store = MOCK_STORES[1].name }) {
             Authorized via OAuth — no manual token entry.
           </p>
           {[
-            ["Shop domain", "coastal-supply.myshopify.com"],
+            ["Shop domain", shopDomain],
             ["Connection status", "Connected"],
             ["Scopes granted", "read/write_products, read/write_inventory, read_locations"],
             ["Connected on", "3 Aug 2026"],
@@ -555,15 +559,27 @@ function AdminConnections({ store = MOCK_STORES[1].name }) {
             </div>
           ))}
           <button
-            disabled
-            className="body-f"
+            onClick={() => {
+              try {
+                setConnectError("");
+                window.location.href = buildShopifyAuthUrl(shopDomain);
+              } catch (err) {
+                setConnectError(err.message);
+              }
+            }}
+            className="focus-ring body-f"
             style={{
-              background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textFaint,
-              borderRadius: 8, padding: "8px 14px", fontSize: 12.5, cursor: "not-allowed", marginTop: 4,
+              background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
+              borderRadius: 8, padding: "8px 14px", fontSize: 12.5, cursor: "pointer", marginTop: 4,
             }}
           >
-            Reconnect Shopify (setup coming soon)
+            Reconnect Shopify
           </button>
+          {connectError && (
+            <div className="body-f" style={{ color: C.error, fontSize: 12, marginTop: 10, background: C.errorDim, padding: "7px 10px", borderRadius: 6 }}>
+              {connectError}
+            </div>
+          )}
         </div>
 
         <div style={{ flex: 1, minWidth: 260, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
@@ -1686,6 +1702,7 @@ function CustomerSettings({ clientRole = "admin" }) {
   const [erpType, setErpType] = useState("MS Access (.accdb)");
   const [dbUser, setDbUser] = useState("");
   const [dbPass, setDbPass] = useState("");
+  const [connectError, setConnectError] = useState("");
 
   const handleForceSync = () => {
     setSyncing(true);
@@ -1863,16 +1880,32 @@ function CustomerSettings({ clientRole = "admin" }) {
                   Not connected
                 </span>
                 <button
-                  disabled
-                  className="body-f"
+                  onClick={() => {
+                    if (!shopUrl.trim()) {
+                      setConnectError("Enter your shop domain first.");
+                      return;
+                    }
+                    try {
+                      setConnectError("");
+                      window.location.href = buildShopifyAuthUrl(shopUrl);
+                    } catch (err) {
+                      setConnectError(err.message);
+                    }
+                  }}
+                  className="focus-ring body-f"
                   style={{
-                    background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textFaint,
-                    borderRadius: 8, padding: "7px 14px", fontSize: 12.5, cursor: "not-allowed",
+                    background: C.accent, border: "none", color: "#FFFFFF",
+                    borderRadius: 8, padding: "7px 14px", fontSize: 12.5, cursor: "pointer",
                   }}
                 >
-                  Connect Shopify (coming soon)
+                  Connect Shopify
                 </button>
               </div>
+              {connectError && (
+                <div className="body-f" style={{ color: C.error, fontSize: 12, marginTop: 10, background: C.errorDim, padding: "7px 10px", borderRadius: 6 }}>
+                  {connectError}
+                </div>
+              )}
             </div>
 
             {/* ERP connection */}
