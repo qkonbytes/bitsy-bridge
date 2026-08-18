@@ -200,6 +200,8 @@ const STATUS_META = {
   healthy: { label: "Healthy", color: C.success, dim: C.successDim },
   syncing: { label: "Syncing", color: C.accent, dim: C.accentDim },
   error: { label: "Error", color: C.error, dim: C.errorDim },
+  pending: { label: "Not synced yet", color: C.textFaint, dim: "transparent" },
+  paused: { label: "Paused", color: C.textFaint, dim: "transparent" },
 };
 
 // ---------- Bridge connector visual ----------
@@ -385,14 +387,78 @@ function Sidebar({ role, active, setActive }) {
 function AdminStores({ onManage }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
+  const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setError("Supabase isn't configured.");
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+
+    (async () => {
+      setLoading(true);
+      const [{ data: clientRows, error: clientsError }, { data: statusRows, error: statusError }] = await Promise.all([
+        supabase.from("clients").select("*").order("name"),
+        supabase.from("client_sync_status").select("*").order("created_at", { ascending: false }),
+      ]);
+
+      if (cancelled) return;
+
+      if (clientsError) {
+        setError(clientsError.message);
+        setLoading(false);
+        return;
+      }
+
+      // Reduce to the latest status row per client (rows are already newest-first)
+      const latestStatusByClient = {};
+      (statusRows || []).forEach((row) => {
+        if (!latestStatusByClient[row.client_id]) latestStatusByClient[row.client_id] = row;
+      });
+
+      const merged = (clientRows || []).map((c) => {
+        const latest = latestStatusByClient[c.id];
+        let status = "pending";
+        let lastSync = "Never synced";
+        if (c.status === "paused") {
+          status = "paused";
+        } else if (latest) {
+          status = latest.status === "success" ? "healthy" : "error";
+          lastSync = new Date(latest.last_sync_at || latest.created_at).toLocaleString();
+        }
+        return {
+          id: c.id,
+          name: c.name,
+          shopDomain: c.shopify_shop_domain || "—",
+          intervalMinutes: c.sync_interval_minutes,
+          status,
+          lastSync,
+          recordsChanged: latest?.records_changed ?? null,
+          skus: null,  // unknown until we query this client's own project — not wired up yet
+          erp: c.status === "onboarding" ? "Not connected yet" : "—",
+          raw: c,
+        };
+      });
+
+      setClients(merged);
+      if (statusError) console.warn("client_sync_status fetch issue:", statusError.message);
+      setLoading(false);
+    })();
+
+    return () => { cancelled = true; };
+  }, []);
 
   const filtered = useMemo(() => {
-    return MOCK_STORES.filter((s) => {
+    return clients.filter((s) => {
       const matchesQuery = s.name.toLowerCase().includes(query.toLowerCase());
       const matchesFilter = filter === "all" || s.status === filter;
       return matchesQuery && matchesFilter;
     });
-  }, [query, filter]);
+  }, [clients, query, filter]);
 
   return (
     <div>
@@ -400,7 +466,7 @@ function AdminStores({ onManage }) {
         <div>
           <h1 className="disp" style={{ color: C.textHi, fontSize: 22, fontWeight: 700, margin: 0 }}>Stores</h1>
           <p className="body-f" style={{ color: C.textLo, fontSize: 13, margin: "4px 0 0 0" }}>
-            {MOCK_STORES.length} connected clients
+            {loading ? "Loading…" : `${clients.length} connected client${clients.length === 1 ? "" : "s"}`}
           </p>
         </div>
         <button
@@ -414,6 +480,12 @@ function AdminStores({ onManage }) {
           <Plus size={15} /> Add Store
         </button>
       </div>
+
+      {error && (
+        <div className="body-f" style={{ color: C.error, fontSize: 13, marginBottom: 16, background: C.errorDim, padding: "10px 12px", borderRadius: 8 }}>
+          {error}
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
         <div style={{ position: "relative", flex: 1, maxWidth: 320 }}>
@@ -440,15 +512,21 @@ function AdminStores({ onManage }) {
         >
           <option value="all">All statuses</option>
           <option value="healthy">Healthy</option>
-          <option value="syncing">Syncing</option>
           <option value="error">Error</option>
+          <option value="pending">Not synced yet</option>
+          <option value="paused">Paused</option>
         </select>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {filtered.length === 0 && (
+        {loading && (
           <div className="body-f" style={{ color: C.textFaint, fontSize: 13.5, padding: "32px 0", textAlign: "center" }}>
-            No stores match "{query}".
+            Loading clients…
+          </div>
+        )}
+        {!loading && filtered.length === 0 && !error && (
+          <div className="body-f" style={{ color: C.textFaint, fontSize: 13.5, padding: "32px 0", textAlign: "center" }}>
+            {clients.length === 0 ? "No clients registered yet." : `No stores match "${query}".`}
           </div>
         )}
         {filtered.map((s) => (
@@ -463,7 +541,7 @@ function AdminStores({ onManage }) {
             <div style={{ minWidth: 160 }}>
               <div className="disp" style={{ color: C.textHi, fontSize: 14.5, fontWeight: 600 }}>{s.name}</div>
               <div className="mono" style={{ color: C.textFaint, fontSize: 11.5, marginTop: 3 }}>
-                {s.skus.toLocaleString()} SKUs · {s.erp}
+                {s.shopDomain} · every {s.intervalMinutes} min
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -471,7 +549,7 @@ function AdminStores({ onManage }) {
               <BridgeConnector status={s.status} />
               <span className="body-f" style={{ fontSize: 11.5, color: C.textFaint, minWidth: 46 }}>Shopify</span>
             </div>
-            <div style={{ minWidth: 100, textAlign: "right" }}>
+            <div style={{ minWidth: 120, textAlign: "right" }}>
               <StatusBadge status={s.status} />
               <div className="mono" style={{ color: C.textFaint, fontSize: 11, marginTop: 5 }}>{s.lastSync}</div>
             </div>
@@ -1237,7 +1315,7 @@ function StoreOverview({ store }) {
         </div>
         <div style={{ flex: 1, ...cardStyle }}>
           <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 6 }}>SKUs tracked</div>
-          <div className="mono" style={{ color: C.textHi, fontSize: 14 }}>{store.skus.toLocaleString()}</div>
+          <div className="mono" style={{ color: C.textHi, fontSize: 14 }}>{store.skus != null ? store.skus.toLocaleString() : "—"}</div>
         </div>
       </div>
 
@@ -1490,7 +1568,7 @@ function StoreDetail({ store, onBack }) {
         <div>
           <h1 className="disp" style={{ color: C.textHi, fontSize: 22, fontWeight: 700, margin: 0 }}>{store.name}</h1>
           <p className="body-f" style={{ color: C.textLo, fontSize: 13, margin: "4px 0 0 0" }}>
-            {store.skus.toLocaleString()} SKUs · {store.erp}
+            {store.skus != null ? `${store.skus.toLocaleString()} SKUs · ` : ""}{store.erp}
           </p>
         </div>
         <StatusBadge status={store.status} />
