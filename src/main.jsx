@@ -3,18 +3,23 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import BitsyBridgeDashboard from "./App.jsx";
 import OAuthCallback from "./OAuthCallback.jsx";
+import ShopifyLaunch from "./ShopifyLaunch.jsx";
 
-// bitsy_bridge is a standalone webapp, never meant to run embedded inside
-// Shopify's admin iframe — but Shopify's "install this app" flow (even for
-// a Custom Distribution / single-store app) can load it embedded anyway,
-// regardless of the "Embedded app" setting in the Dev Dashboard. This is a
-// well-known, long-standing gap in Shopify's own tooling, not something we
-// can fully rely on a dashboard toggle to prevent. If we detect we're
-// inside a frame, force a top-level navigation to escape it before
-// anything else runs — otherwise our own OAuth flow (which expects a real,
-// non-embedded browser context) silently breaks in ways that are very hard
-// to diagnose from the inside.
-if (window.self !== window.top) {
+// bitsy_bridge's main dashboard is a standalone webapp, never meant to run
+// embedded inside Shopify's admin iframe — but Shopify's "install this app"
+// flow (even for a Custom Distribution / single-store app) can load it
+// embedded anyway, regardless of the "Embedded app" setting in the Dev
+// Dashboard. If we detect we're inside a frame, force a top-level
+// navigation to escape it before anything else runs.
+//
+// EXCEPTION: /shopify-launch is deliberately DIFFERENT — it's the page
+// Shopify opens when someone launches the app from inside their admin,
+// and it's SUPPOSED to run embedded, since it uses App Bridge to get a
+// session token for the Token Exchange grant. Escaping the iframe there
+// would break the entire mechanism this page exists for.
+const isShopifyLaunchRoute = window.location.pathname.startsWith("/shopify-launch");
+
+if (!isShopifyLaunchRoute && window.self !== window.top) {
   try {
     window.top.location.href = window.self.location.href;
   } catch {
@@ -28,6 +33,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     <BrowserRouter>
       <Routes>
         <Route path="/oauth/callback" element={<OAuthCallback />} />
+        <Route path="/shopify-launch" element={<ShopifyLaunch />} />
         <Route path="/*" element={<BitsyBridgeDashboard />} />
       </Routes>
     </BrowserRouter>
