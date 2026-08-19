@@ -582,6 +582,7 @@ function AdminConnections({ store, onStoreUpdated }) {
   const [savingSecrets, setSavingSecrets] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
+  const [installLink, setInstallLink] = useState("");
 
   const refetchClient = async () => {
     const { data, error } = await supabase.from("clients").select("*").eq("id", store.id).maybeSingle();
@@ -735,8 +736,41 @@ function AdminConnections({ store, onStoreUpdated }) {
           </button>
 
           <div style={{ height: 16 }} />
+          <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12 }}>
+            <label className="body-f" style={{ ...labelStyle, marginBottom: 4 }}>
+              Step 1 — First install only
+            </label>
+            <p className="body-f" style={{ color: C.textFaint, fontSize: 11, margin: "0 0 8px 0" }}>
+              This app type requires Shopify's own signed install link for the very first install — our Connect button can't do this part. Get it from the Dev Dashboard → this app → "1 specific store" distribution, paste it here, then click through it once.
+            </p>
+            <input
+              value={installLink}
+              onChange={(e) => setInstallLink(e.target.value)}
+              className="focus-ring mono"
+              style={{ ...inputStyle, marginBottom: 8, fontSize: 11.5 }}
+              placeholder="https://admin.shopify.com/oauth/install_custom_app?..."
+            />
+            <button
+              onClick={() => {
+                if (!installLink.trim()) return;
+                window.location.href = installLink.trim();
+              }}
+              disabled={!installLink.trim()}
+              className="focus-ring body-f"
+              style={{
+                background: "transparent", border: `1px solid ${C.borderLight}`,
+                color: installLink.trim() ? C.textHi : C.textFaint,
+                borderRadius: 7, padding: "6px 12px", fontSize: 12,
+                cursor: installLink.trim() ? "pointer" : "not-allowed",
+              }}
+            >
+              Open install link
+            </button>
+          </div>
+
+          <div style={{ height: 16 }} />
           <label className="body-f" style={labelStyle}>
-            Shopify Client Secret {hasSecretSaved && <span style={{ color: C.success }}>· saved</span>}
+            Step 2 — Shopify Client Secret {hasSecretSaved && <span style={{ color: C.success }}>· saved</span>}
           </label>
           <input
             type="password"
@@ -749,7 +783,7 @@ function AdminConnections({ store, onStoreUpdated }) {
 
           <div style={{ height: 4 }} />
           <button onClick={handleConnect} className="focus-ring body-f" style={{ ...saveBtnStyle, background: C.accent, color: "#FFFFFF", border: "none" }}>
-            Connect Shopify
+            Connect Shopify (after Step 1 is done once)
           </button>
           {connectError && (
             <div className="body-f" style={{ color: C.error, fontSize: 12, marginTop: 10, background: C.errorDim, padding: "7px 10px", borderRadius: 6 }}>
