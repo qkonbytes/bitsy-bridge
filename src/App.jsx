@@ -901,9 +901,41 @@ function DBTable({ columns, rows }) {
 }
 
 // ---------- Admin: Shopify ----------
-function AdminShopifyDB({ fixedStore }) {
-  const [store, setStore] = useState(fixedStore || MOCK_STORES[0].name);
-  const rows = getShopifyRows(fixedStore || store);
+function AdminShopifyDB({ store }) {
+  const [rows, setRows] = useState([]);
+  const [count, setCount] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const res = await readClientTable(store?.id, "shopify_data", {
+        order: { column: "sku", ascending: true },
+        limit: 500,
+        count: true,
+      });
+      if (cancelled) return;
+      setRows(res.rows);
+      setCount(res.count);
+      setError(res.error);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [store?.id]);
+
+  const filtered = search
+    ? rows.filter((r) =>
+        (r.sku || "").toLowerCase().includes(search.toLowerCase()) ||
+        (r.name || "").toLowerCase().includes(search.toLowerCase()))
+    : rows;
+
+  const message = tableStateMessage({
+    loading, error, rows,
+    emptyText: "No Shopify products mirrored yet — run the fetch, or wait for the hourly sync.",
+  });
 
   return (
     <div>
@@ -912,31 +944,78 @@ function AdminShopifyDB({ fixedStore }) {
           <h1 className="disp" style={{ color: C.textHi, fontSize: 22, fontWeight: 700, margin: 0 }}>Shopify</h1>
           <p className="body-f" style={{ color: C.textLo, fontSize: 13, margin: "4px 0 0 0" }}>
             Mirror of last confirmed Shopify state (<span className="mono">shopify_data</span> table)
+            {count != null && ` · ${count.toLocaleString()} SKUs`}
+            {count != null && count > rows.length && ` · showing first ${rows.length}`}
           </p>
         </div>
-        {!fixedStore && <StoreSelector value={store} onChange={setStore} />}
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search SKU or product..."
+          className="focus-ring body-f"
+          style={{
+            background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
+            padding: "8px 12px", color: C.textHi, fontSize: 13, width: 240,
+          }}
+        />
       </div>
       <div style={{ height: 18 }} />
-      <DBTable
-        columns={[
-          { key: "sku", label: "SKU", width: "0.9fr" },
-          { key: "name", label: "Product", width: "1.6fr" },
-          { key: "qty", label: "Qty", width: "0.6fr" },
-          { key: "price", label: "Price", width: "0.7fr", render: (r) => `R ${r.price.toFixed(2)}` },
-          { key: "variantId", label: "Variant ID", width: "1.4fr" },
-          { key: "lastConfirmed", label: "Confirmed", width: "0.8fr" },
-        ]}
-        rows={rows}
-      />
+      {message ? (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 24 }}>
+          <p className="body-f" style={{ color: error ? C.error : C.textFaint, fontSize: 13, margin: 0 }}>{message}</p>
+        </div>
+      ) : (
+        <DBTable
+          columns={[
+            { key: "sku", label: "SKU", width: "0.9fr" },
+            { key: "name", label: "Product", width: "1.6fr" },
+            { key: "qty", label: "Qty", width: "0.6fr" },
+            { key: "price", label: "Price", width: "0.7fr", render: (r) => `R ${Number(r.price || 0).toFixed(2)}` },
+            { key: "variant_id", label: "Variant ID", width: "1.4fr" },
+            { key: "last_confirmed", label: "Confirmed", width: "0.9fr", render: (r) => r.last_confirmed ? new Date(r.last_confirmed).toLocaleString() : "—" },
+          ]}
+          rows={filtered}
+        />
+      )}
     </div>
   );
 }
 
 // ---------- Admin: ERP ----------
-function AdminERPDB({ fixedStore }) {
-  const [store, setStore] = useState(fixedStore || MOCK_STORES[0].name);
-  const [location, setLocation] = useState("Location 1");
-  const rows = getErpRows(fixedStore || store).filter((r) => r.location === location);
+function AdminERPDB({ store }) {
+  const [rows, setRows] = useState([]);
+  const [count, setCount] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [location, setLocation] = useState("all");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const res = await readClientTable(store?.id, "erp_data", {
+        order: { column: "sku", ascending: true },
+        limit: 500,
+        count: true,
+        filters: location === "all" ? undefined : [{ column: "location", value: location }],
+      });
+      if (cancelled) return;
+      setRows(res.rows);
+      setCount(res.count);
+      setError(res.error);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [store?.id, location]);
+
+  // Locations come from the data itself rather than a fixed list, since each
+  // client's ERP names them differently.
+  const locations = Array.from(new Set(rows.map((r) => r.location).filter(Boolean))).sort();
+
+  const message = tableStateMessage({
+    loading, error, rows,
+    emptyText: "No ERP data received yet — this fills once the local agent starts pushing.",
+  });
 
   return (
     <div>
@@ -945,37 +1024,42 @@ function AdminERPDB({ fixedStore }) {
           <h1 className="disp" style={{ color: C.textHi, fontSize: 22, fontWeight: 700, margin: 0 }}>ERP</h1>
           <p className="body-f" style={{ color: C.textLo, fontSize: 13, margin: "4px 0 0 0" }}>
             Latest snapshot pushed by the local agent (<span className="mono">erp_data</span> table)
+            {count != null && ` · ${count.toLocaleString()} rows`}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          {!fixedStore && <StoreSelector value={store} onChange={setStore} />}
-          <select
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-            className="focus-ring body-f"
-            style={{
-              background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
-              padding: "8px 12px", color: C.textHi, fontSize: 13, cursor: "pointer",
-            }}
-          >
-            {ERP_LOCATIONS.map((loc) => (
-              <option key={loc} value={loc}>{LOCATION_LABEL(loc)}</option>
-            ))}
-          </select>
-        </div>
+        <select
+          value={location}
+          onChange={(e) => setLocation(e.target.value)}
+          className="focus-ring body-f"
+          style={{
+            background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
+            padding: "8px 12px", color: C.textHi, fontSize: 13, cursor: "pointer",
+          }}
+        >
+          <option value="all">All locations</option>
+          {locations.map((loc) => (
+            <option key={loc} value={loc}>{loc}</option>
+          ))}
+        </select>
       </div>
       <div style={{ height: 18 }} />
-      <DBTable
-        columns={[
-          { key: "sku", label: "SKU", width: "0.9fr" },
-          { key: "name", label: "Product", width: "1.6fr" },
-          { key: "qty", label: "Qty", width: "0.6fr" },
-          { key: "price", label: "Price", width: "0.7fr", render: (r) => `R ${r.price.toFixed(2)}` },
-          { key: "location", label: "Location", width: "1fr", render: (r) => LOCATION_LABEL(r.location) },
-          { key: "lastReceived", label: "Received", width: "0.8fr" },
-        ]}
-        rows={rows}
-      />
+      {message ? (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 24 }}>
+          <p className="body-f" style={{ color: error ? C.error : C.textFaint, fontSize: 13, margin: 0 }}>{message}</p>
+        </div>
+      ) : (
+        <DBTable
+          columns={[
+            { key: "sku", label: "SKU", width: "0.9fr" },
+            { key: "name", label: "Product", width: "1.6fr" },
+            { key: "qty", label: "Qty", width: "0.6fr" },
+            { key: "price", label: "Price", width: "0.7fr", render: (r) => `R ${Number(r.price || 0).toFixed(2)}` },
+            { key: "location", label: "Location", width: "1fr" },
+            { key: "last_received", label: "Received", width: "0.9fr", render: (r) => r.last_received ? new Date(r.last_received).toLocaleString() : "—" },
+          ]}
+          rows={rows}
+        />
+      )}
     </div>
   );
 }
@@ -1632,27 +1716,62 @@ function StoreOverview({ store }) {
 // ---------- Admin: Location mapping (Q-KON Bytes only) ----------
 // ---------- Admin: Not Matched (ERP part numbers with no Shopify match) ----------
 function NotMatched({ store }) {
-  const rows = getNotMatchedRows(store.name);
+  const [rows, setRows] = useState([]);
+  const [count, setCount] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const res = await readClientTable(store?.id, "nett_changed", {
+        filters: [{ column: "change_type", value: "not_matched" }],
+        order: { column: "created_at", ascending: false },
+        limit: 500,
+        count: true,
+      });
+      if (cancelled) return;
+      setRows(res.rows);
+      setCount(res.count);
+      setError(res.error);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [store?.id]);
+
+  const message = tableStateMessage({
+    loading, error, rows,
+    emptyText: "Nothing unmatched — every ERP part number found a Shopify product.",
+  });
 
   return (
     <div>
       <div className="disp" style={{ color: C.textHi, fontSize: 14, fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
         <AlertTriangle size={15} color={C.error} /> Not matched
+        {count != null && count > 0 && (
+          <span className="body-f" style={{ color: C.textFaint, fontSize: 12, fontWeight: 400 }}>
+            · {count.toLocaleString()}
+          </span>
+        )}
       </div>
       <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, margin: "0 0 16px 0" }}>
         ERP part numbers with no matching SKU in Shopify — never pushed, since bitsy_bridge doesn't create new Shopify products.
       </p>
-      <DBTable
-        columns={[
-          { key: "sku", label: "Part number", width: "0.9fr" },
-          { key: "name", label: "Product", width: "1.6fr" },
-          { key: "location", label: "Location", width: "1fr", render: (r) => LOCATION_LABEL(r.location) },
-          { key: "qty", label: "Qty", width: "0.6fr" },
-          { key: "price", label: "Price", width: "0.7fr", render: (r) => `R ${r.price.toFixed(2)}` },
-          { key: "lastReceived", label: "Last seen", width: "0.8fr" },
-        ]}
-        rows={rows}
-      />
+      {message ? (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 24 }}>
+          <p className="body-f" style={{ color: error ? C.error : C.textFaint, fontSize: 13, margin: 0 }}>{message}</p>
+        </div>
+      ) : (
+        <DBTable
+          columns={[
+            { key: "sku", label: "Part number", width: "1fr" },
+            { key: "new_value", label: "Detail", width: "1.8fr", render: (r) => r.new_value || "—" },
+            { key: "created_at", label: "Logged", width: "1fr", render: (r) => r.created_at ? new Date(r.created_at).toLocaleString() : "—" },
+          ]}
+          rows={rows}
+        />
+      )}
     </div>
   );
 }
@@ -1737,6 +1856,67 @@ function LocationMapping({ store }) {
   );
 }
 
+// ---------- Admin: Sync History (real sync_runs data) ----------
+function AdminSyncHistory({ store }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const res = await readClientTable(store?.id, "sync_runs", {
+        order: { column: "started_at", ascending: false },
+        limit: 50,
+      });
+      if (cancelled) return;
+      setRows(res.rows);
+      setError(res.error);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [store?.id]);
+
+  const message = tableStateMessage({
+    loading, error, rows,
+    emptyText: "No sync runs recorded yet.",
+  });
+
+  const duration = (r) => {
+    if (!r.started_at || !r.finished_at) return "—";
+    const secs = (new Date(r.finished_at) - new Date(r.started_at)) / 1000;
+    return `${secs.toFixed(1)}s`;
+  };
+
+  return (
+    <div>
+      <h1 className="disp" style={{ color: C.textHi, fontSize: 22, fontWeight: 700, margin: "0 0 4px 0" }}>
+        Sync History
+      </h1>
+      <p className="body-f" style={{ color: C.textLo, fontSize: 13, margin: "0 0 20px 0" }}>
+        {store?.name} · last 50 runs (<span className="mono">sync_runs</span> table)
+      </p>
+      {message ? (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 24 }}>
+          <p className="body-f" style={{ color: error ? C.error : C.textFaint, fontSize: 13, margin: 0 }}>{message}</p>
+        </div>
+      ) : (
+        <DBTable
+          columns={[
+            { key: "started_at", label: "Started", width: "1.2fr", render: (r) => r.started_at ? new Date(r.started_at).toLocaleString() : "—" },
+            { key: "records_changed", label: "Changed", width: "0.7fr", render: (r) => r.records_changed ?? 0 },
+            { key: "status", label: "Status", width: "0.8fr" },
+            { key: "duration", label: "Duration", width: "0.7fr", render: duration },
+            { key: "error_message", label: "Error", width: "1.6fr", render: (r) => r.error_message || "—" },
+          ]}
+          rows={rows}
+        />
+      )}
+    </div>
+  );
+}
+
 function StoreDetail({ store, onBack }) {
   const [tab, setTab] = useState("overview");
   const tabs = [
@@ -1791,10 +1971,10 @@ function StoreDetail({ store, onBack }) {
       </div>
 
       {tab === "overview" && <StoreOverview store={store} />}
-      {tab === "shopify" && <AdminShopifyDB fixedStore={store.name} />}
-      {tab === "erp" && <AdminERPDB fixedStore={store.name} />}
+      {tab === "shopify" && <AdminShopifyDB store={store} />}
+      {tab === "erp" && <AdminERPDB store={store} />}
       {tab === "notmatched" && <NotMatched store={store} />}
-      {tab === "history" && <CustomerHistory storeName={store.name} />}
+      {tab === "history" && <AdminSyncHistory store={store} />}
       {tab === "logs" && <AdminLogs fixedStore={store.name} />}
       {tab === "connections" && <AdminConnections store={store} />}
       {tab === "locations" && <LocationMapping store={store} />}
