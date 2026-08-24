@@ -1,4 +1,4 @@
-import { supabase } from "./supabaseClient.js";
+import { supabase } from "./supabaseClient";
 
 // Admins are only authenticated against the control plane, so they can't
 // query a client's own project directly. This goes through the
