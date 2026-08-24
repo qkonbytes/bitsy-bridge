@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { supabase, isSupabaseConfigured } from "./lib/supabaseClient";
 import { createClient } from "@supabase/supabase-js";
 import { buildShopifyAuthUrl } from "./lib/shopifyOAuth";
+import { readClientTable, tableStateMessage } from "./lib/adminData";
 import {
   LayoutGrid,
   Activity,
@@ -987,17 +988,19 @@ function AdminERPDB({ store }) {
   const [count, setCount] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [location, setLocation] = useState("all");
+  const [onlyChanged, setOnlyChanged] = useState(false);
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const res = await readClientTable(store?.id, "erp_data", {
+      const res = await readClientTable(store?.id, "shopify_data", {
+        select: "sku,name,qty,price,store1_qty,store2_qty,store3_qty,store4_qty,store5_qty,store1_price,store2_price,store3_price,store4_price,store5_price,nett_changed_qty,nett_changed_price,to_update",
         order: { column: "sku", ascending: true },
         limit: 500,
         count: true,
-        filters: location === "all" ? undefined : [{ column: "location", value: location }],
+        filters: onlyChanged ? [{ column: "to_update", value: true }] : undefined,
       });
       if (cancelled) return;
       setRows(res.rows);
@@ -1006,15 +1009,34 @@ function AdminERPDB({ store }) {
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [store?.id, location]);
+  }, [store?.id, onlyChanged]);
 
-  // Locations come from the data itself rather than a fixed list, since each
-  // client's ERP names them differently.
-  const locations = Array.from(new Set(rows.map((r) => r.location).filter(Boolean))).sort();
+  // ERP stock lives across store1..store5; the sync compares their total
+  // against the single Shopify qty.
+  const erpQty = (r) =>
+    (r.store1_qty || 0) + (r.store2_qty || 0) + (r.store3_qty || 0) +
+    (r.store4_qty || 0) + (r.store5_qty || 0);
+
+  // Price is taken as the highest non-null store price, matching how
+  // to_update is computed in the database.
+  const erpPrice = (r) => {
+    const prices = [r.store1_price, r.store2_price, r.store3_price, r.store4_price, r.store5_price]
+      .filter((v) => v != null)
+      .map(Number);
+    return prices.length ? Math.max(...prices) : null;
+  };
+
+  const filtered = search
+    ? rows.filter((r) =>
+        (r.sku || "").toLowerCase().includes(search.toLowerCase()) ||
+        (r.name || "").toLowerCase().includes(search.toLowerCase()))
+    : rows;
 
   const message = tableStateMessage({
     loading, error, rows,
-    emptyText: "No ERP data received yet — this fills once the local agent starts pushing.",
+    emptyText: onlyChanged
+      ? "Nothing queued for update — Shopify matches the ERP."
+      : "No ERP stock figures yet — these fill once the Omni sync runs.",
   });
 
   return (
@@ -1023,24 +1045,34 @@ function AdminERPDB({ store }) {
         <div>
           <h1 className="disp" style={{ color: C.textHi, fontSize: 22, fontWeight: 700, margin: 0 }}>ERP</h1>
           <p className="body-f" style={{ color: C.textLo, fontSize: 13, margin: "4px 0 0 0" }}>
-            Latest snapshot pushed by the local agent (<span className="mono">erp_data</span> table)
+            Stock and pricing pulled from Omni, per store column
             {count != null && ` · ${count.toLocaleString()} rows`}
           </p>
         </div>
-        <select
-          value={location}
-          onChange={(e) => setLocation(e.target.value)}
-          className="focus-ring body-f"
-          style={{
-            background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
-            padding: "8px 12px", color: C.textHi, fontSize: 13, cursor: "pointer",
-          }}
-        >
-          <option value="all">All locations</option>
-          {locations.map((loc) => (
-            <option key={loc} value={loc}>{loc}</option>
-          ))}
-        </select>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <button
+            onClick={() => setOnlyChanged(!onlyChanged)}
+            className="focus-ring body-f"
+            style={{
+              background: onlyChanged ? C.accent : "transparent",
+              border: `1px solid ${onlyChanged ? C.accent : C.borderLight}`,
+              color: onlyChanged ? "#FFFFFF" : C.textLo,
+              borderRadius: 8, padding: "8px 12px", fontSize: 12.5, cursor: "pointer",
+            }}
+          >
+            Needs update only
+          </button>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search SKU or product..."
+            className="focus-ring body-f"
+            style={{
+              background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
+              padding: "8px 12px", color: C.textHi, fontSize: 13, width: 220,
+            }}
+          />
+        </div>
       </div>
       <div style={{ height: 18 }} />
       {message ? (
@@ -1051,13 +1083,21 @@ function AdminERPDB({ store }) {
         <DBTable
           columns={[
             { key: "sku", label: "SKU", width: "0.9fr" },
-            { key: "name", label: "Product", width: "1.6fr" },
-            { key: "qty", label: "Qty", width: "0.6fr" },
-            { key: "price", label: "Price", width: "0.7fr", render: (r) => `R ${Number(r.price || 0).toFixed(2)}` },
-            { key: "location", label: "Location", width: "1fr" },
-            { key: "last_received", label: "Received", width: "0.9fr", render: (r) => r.last_received ? new Date(r.last_received).toLocaleString() : "—" },
+            { key: "name", label: "Product", width: "1.5fr" },
+            { key: "erpQty", label: "ERP qty", width: "0.6fr", render: erpQty },
+            { key: "qty", label: "Shopify qty", width: "0.7fr", render: (r) => r.qty ?? 0 },
+            { key: "erpPrice", label: "ERP price", width: "0.8fr", render: (r) => {
+                const p = erpPrice(r);
+                return p == null ? "—" : `R ${p.toFixed(2)}`;
+              } },
+            { key: "price", label: "Shopify price", width: "0.8fr", render: (r) => `R ${Number(r.price || 0).toFixed(2)}` },
+            { key: "to_update", label: "Queued", width: "0.6fr", render: (r) => (
+                <span style={{ color: r.to_update ? C.accent : C.textFaint }}>
+                  {r.to_update ? "Yes" : "—"}
+                </span>
+              ) },
           ]}
-          rows={rows}
+          rows={filtered}
         />
       )}
     </div>
@@ -1550,6 +1590,30 @@ function Placeholder({ title }) {
 
 // ---------- Admin: Store Detail (opened via "Manage") ----------
 function StoreOverview({ store }) {
+  // Live counts straight from the client's shopify_data table.
+  const [stats, setStats] = useState({ total: null, queued: null, loading: true });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [totalRes, queuedRes] = await Promise.all([
+        readClientTable(store?.id, "shopify_data", { select: "sku", limit: 1, count: true }),
+        readClientTable(store?.id, "shopify_data", {
+          select: "sku", limit: 1, count: true,
+          filters: [{ column: "to_update", value: true }],
+        }),
+      ]);
+      if (cancelled) return;
+      setStats({
+        total: totalRes.count,
+        queued: queuedRes.count,
+        loading: false,
+        error: totalRes.error || queuedRes.error,
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [store?.id]);
+
   const [interval_, setInterval_] = useState("30 min");
   const [paused, setPaused] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -1598,7 +1662,15 @@ function StoreOverview({ store }) {
         </div>
         <div style={{ flex: 1, ...cardStyle }}>
           <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 6 }}>SKUs tracked</div>
-          <div className="mono" style={{ color: C.textHi, fontSize: 14 }}>{store.skus != null ? store.skus.toLocaleString() : "—"}</div>
+          <div className="mono" style={{ color: C.textHi, fontSize: 14 }}>
+            {stats.loading ? "…" : stats.total != null ? stats.total.toLocaleString() : "—"}
+          </div>
+        </div>
+        <div style={{ flex: 1, ...cardStyle }}>
+          <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 6 }}>Queued to push</div>
+          <div className="mono" style={{ color: stats.queued ? C.accent : C.textHi, fontSize: 14 }}>
+            {stats.loading ? "…" : stats.queued != null ? stats.queued.toLocaleString() : "—"}
+          </div>
         </div>
       </div>
 
