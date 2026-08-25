@@ -298,7 +298,6 @@ function Sidebar({ role, active, setActive }) {
     { key: "dashboard", label: "Dashboard", icon: LayoutGrid },
     { key: "shopifydb", label: "Shopify", icon: ShoppingBag },
     { key: "erpdb", label: "ERP", icon: Database },
-    { key: "notmatched", label: "Not Matched", icon: AlertTriangle },
     { key: "history", label: "Sync History", icon: Activity },
     { key: "settings", label: "Settings", icon: Settings },
   ];
@@ -1591,28 +1590,53 @@ function Placeholder({ title }) {
 // ---------- Admin: Store Detail (opened via "Manage") ----------
 function StoreOverview({ store }) {
   // Live counts straight from the client's shopify_data table.
-  const [stats, setStats] = useState({ total: null, queued: null, loading: true });
+  const [stats, setStats] = useState({ total: null, queued: null, lastFetch: null, loading: true });
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [totalRes, queuedRes] = await Promise.all([
+      const [totalRes, queuedRes, settingsRes] = await Promise.all([
         readClientTable(store?.id, "shopify_data", { select: "sku", limit: 1, count: true }),
         readClientTable(store?.id, "shopify_data", {
           select: "sku", limit: 1, count: true,
           filters: [{ column: "to_update", value: true }],
         }),
+        readClientTable(store?.id, "settings", {
+          select: "shopify_fetch_updated_at,shopify_connected,shopify_connected_at",
+          limit: 1,
+        }),
       ]);
       if (cancelled) return;
+      const s = settingsRes.rows?.[0] || {};
       setStats({
         total: totalRes.count,
         queued: queuedRes.count,
+        lastFetch: s.shopify_fetch_updated_at || null,
+        connected: !!s.shopify_connected,
         loading: false,
-        error: totalRes.error || queuedRes.error,
+        error: totalRes.error || queuedRes.error || settingsRes.error,
       });
     })();
     return () => { cancelled = true; };
   }, [store?.id]);
+
+  // Derived from real data rather than the control plane's client_sync_status,
+  // which nothing writes to yet. "Stale" means the hourly fetch hasn't run
+  // when it should have.
+  const derivedStatus = (() => {
+    if (syncing) return "syncing";
+    if (stats.loading) return "pending";
+    if (!stats.connected) return "pending";
+    if (!stats.lastFetch) return "pending";
+    const ageMinutes = (Date.now() - new Date(stats.lastFetch)) / 60000;
+    return ageMinutes > 150 ? "error" : "healthy";
+  })();
+
+  const lastSyncedText = stats.loading
+    ? "…"
+    : stats.lastFetch
+      ? new Date(stats.lastFetch).toLocaleString()
+      : "Never synced";
 
   const [interval_, setInterval_] = useState("30 min");
   const [paused, setPaused] = useState(false);
@@ -1625,7 +1649,7 @@ function StoreOverview({ store }) {
     setTimeout(() => setSyncing(false), 1800);
   };
 
-  const status = syncing ? "syncing" : store.status;
+  const status = derivedStatus;
   const cardStyle = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 };
   const labelStyle = { fontSize: 11.5, color: C.textFaint, marginBottom: 6, display: "block" };
   const inputStyle = {
@@ -1658,7 +1682,7 @@ function StoreOverview({ store }) {
         </div>
         <div style={{ flex: 1, ...cardStyle }}>
           <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 6 }}>Last synced</div>
-          <div className="mono" style={{ color: C.textHi, fontSize: 14 }}>{syncing ? "syncing now…" : store.lastSync}</div>
+          <div className="mono" style={{ color: C.textHi, fontSize: 14 }}>{syncing ? "syncing now…" : lastSyncedText}</div>
         </div>
         <div style={{ flex: 1, ...cardStyle }}>
           <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 6 }}>SKUs tracked</div>
@@ -1995,7 +2019,6 @@ function StoreDetail({ store, onBack }) {
     { key: "overview", label: "Overview" },
     { key: "shopify", label: "Shopify" },
     { key: "erp", label: "ERP" },
-    { key: "notmatched", label: "Not Matched" },
     { key: "history", label: "Sync History" },
     { key: "logs", label: "Logs" },
     { key: "connections", label: "Connections" },
@@ -2045,7 +2068,6 @@ function StoreDetail({ store, onBack }) {
       {tab === "overview" && <StoreOverview store={store} />}
       {tab === "shopify" && <AdminShopifyDB store={store} />}
       {tab === "erp" && <AdminERPDB store={store} />}
-      {tab === "notmatched" && <NotMatched store={store} />}
       {tab === "history" && <AdminSyncHistory store={store} />}
       {tab === "logs" && <AdminLogs fixedStore={store.name} />}
       {tab === "connections" && <AdminConnections store={store} />}
@@ -2905,7 +2927,6 @@ export default function BitsyBridgeDashboard() {
     if (customerActive === "dashboard") return <CustomerDashboard />;
     if (customerActive === "shopifydb") return <CustomerShopifyDB />;
     if (customerActive === "erpdb") return <CustomerERPDB />;
-    if (customerActive === "notmatched") return <CustomerNotMatched />;
     if (customerActive === "history") return <CustomerHistory />;
     if (customerActive === "settings") return <CustomerSettings clientRole={clientRole} projectInfo={projectInfo} />;
     return null;
