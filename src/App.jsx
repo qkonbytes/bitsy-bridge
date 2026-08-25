@@ -1620,6 +1620,18 @@ function StoreOverview({ store }) {
     return () => { cancelled = true; };
   }, [store?.id]);
 
+
+  const [interval_, setInterval_] = useState("30 min");
+  const [paused, setPaused] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [markupType, setMarkupType] = useState("percent");
+  const [markupValue, setMarkupValue] = useState("10");
+
+  const handleForceSync = () => {
+    setSyncing(true);
+    setTimeout(() => setSyncing(false), 1800);
+  };
+
   // Derived from real data rather than the control plane's client_sync_status,
   // which nothing writes to yet. "Stale" means the hourly fetch hasn't run
   // when it should have.
@@ -1637,17 +1649,6 @@ function StoreOverview({ store }) {
     : stats.lastFetch
       ? new Date(stats.lastFetch).toLocaleString()
       : "Never synced";
-
-  const [interval_, setInterval_] = useState("30 min");
-  const [paused, setPaused] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [markupType, setMarkupType] = useState("percent");
-  const [markupValue, setMarkupValue] = useState("10");
-
-  const handleForceSync = () => {
-    setSyncing(true);
-    setTimeout(() => setSyncing(false), 1800);
-  };
 
   const status = derivedStatus;
   const cardStyle = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 };
