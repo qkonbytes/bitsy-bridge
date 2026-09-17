@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { supabase, isSupabaseConfigured } from "./lib/supabaseClient";
 import { createClient } from "@supabase/supabase-js";
 import { buildShopifyAuthUrl } from "./lib/shopifyOAuth";
-import { readClientTable, tableStateMessage } from "./lib/adminData";
+import { readClientTable, writeClientControl, tableStateMessage } from "./lib/adminData";
 import {
   LayoutGrid,
   Activity,
@@ -1610,12 +1610,17 @@ function StoreOverview({ store }) {
           filters: [{ column: "to_update", value: true }],
         }),
         readClientTable(store?.id, "settings", {
-          select: "shopify_fetch_updated_at,shopify_connected,shopify_connected_at",
+          select: "shopify_fetch_updated_at,shopify_connected,shopify_connected_at,sync_interval_minutes,paused,markup_type,markup_value",
           limit: 1,
         }),
       ]);
       if (cancelled) return;
       const s = settingsRes.rows?.[0] || {};
+      // Seed the controls from what's actually saved for this client.
+      if (s.sync_interval_minutes != null) setIntervalMins(String(s.sync_interval_minutes));
+      if (s.paused != null) setPaused(!!s.paused);
+      if (s.markup_type) setMarkupType(s.markup_type);
+      if (s.markup_value != null) setMarkupValue(String(s.markup_value));
       setStats({
         total: totalRes.count,
         queued: queuedRes.count,
@@ -1629,15 +1634,68 @@ function StoreOverview({ store }) {
   }, [store?.id]);
 
 
-  const [interval_, setInterval_] = useState("30 min");
+  const [intervalMins, setIntervalMins] = useState("30");
   const [paused, setPaused] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [markupType, setMarkupType] = useState("percent");
   const [markupValue, setMarkupValue] = useState("10");
+  const [savingInterval, setSavingInterval] = useState(false);
+  const [savingMarkup, setSavingMarkup] = useState(false);
+  const [controlMessage, setControlMessage] = useState("");
 
-  const handleForceSync = () => {
+  const reportResult = (res, successText) => {
+    setControlMessage(res.ok ? successText : `Error: ${res.error}`);
+    setTimeout(() => setControlMessage(""), 4000);
+  };
+
+  // Runs the client's shopify-fetch-products function now, rather than
+  // waiting for the hourly cron. A large catalogue is walked across several
+  // runs, so this may report has_more and need running again.
+  const handleForceSync = async () => {
     setSyncing(true);
-    setTimeout(() => setSyncing(false), 1800);
+    setControlMessage("");
+    const res = await writeClientControl(store?.id, { action: "fetch_shopify" });
+    setSyncing(false);
+    if (!res.ok) {
+      reportResult(res, "");
+      return;
+    }
+    const r = res.result?.result || {};
+    setControlMessage(
+      r.has_more
+        ? `Fetched ${r.variants_saved ?? 0} — more remaining, run again to continue.`
+        : `Fetched ${r.variants_saved ?? 0} variants.`
+    );
+    setTimeout(() => setControlMessage(""), 6000);
+  };
+
+  const handleSaveInterval = async () => {
+    setSavingInterval(true);
+    const res = await writeClientControl(store?.id, {
+      settings: { sync_interval_minutes: Number(intervalMins) },
+    });
+    setSavingInterval(false);
+    reportResult(res, "Interval saved.");
+  };
+
+  const handleTogglePause = async (next) => {
+    setPaused(next);
+    const res = await writeClientControl(store?.id, { settings: { paused: next } });
+    if (!res.ok) {
+      setPaused(!next); // put it back if the write failed
+      reportResult(res, "");
+    } else {
+      reportResult(res, next ? "Syncs paused." : "Syncs resumed.");
+    }
+  };
+
+  const handleSaveMarkup = async () => {
+    setSavingMarkup(true);
+    const res = await writeClientControl(store?.id, {
+      settings: { markup_type: markupType, markup_value: Number(markupValue) },
+    });
+    setSavingMarkup(false);
+    reportResult(res, "Markup saved.");
   };
 
   // Derived from real data rather than the control plane's client_sync_status,
@@ -1719,18 +1777,23 @@ function StoreOverview({ store }) {
             <label className="body-f" style={labelStyle}>Sync interval</label>
             <div style={{ display: "flex", gap: 8 }}>
               <select
-                value={interval_}
-                onChange={(e) => setInterval_(e.target.value)}
+                value={intervalMins}
+                onChange={(e) => setIntervalMins(e.target.value)}
                 disabled={paused}
                 className="focus-ring body-f"
                 style={{ ...inputStyle, flex: 1, cursor: paused ? "not-allowed" : "pointer", opacity: paused ? 0.5 : 1 }}
               >
-                {["15 min", "30 min", "1 hr", "6 hr", "24 hr"].map((v) => (
-                  <option key={v} value={v}>{v}</option>
+                {[["15", "15 min"], ["30", "30 min"], ["60", "1 hr"], ["360", "6 hr"], ["1440", "24 hr"]].map(([v, label]) => (
+                  <option key={v} value={v}>{label}</option>
                 ))}
               </select>
-              <button className="focus-ring body-f" style={saveBtn} disabled={paused}>
-                <Check size={14} /> Save
+              <button
+                onClick={handleSaveInterval}
+                disabled={paused || savingInterval}
+                className="focus-ring body-f"
+                style={saveBtn}
+              >
+                <Check size={14} /> {savingInterval ? "Saving…" : "Save"}
               </button>
             </div>
           </div>
@@ -1738,7 +1801,7 @@ function StoreOverview({ store }) {
           <div>
             <label className="body-f" style={labelStyle}>Pause all syncs</label>
             <div style={{ display: "flex", alignItems: "center", gap: 10, paddingTop: 2 }}>
-              <Toggle checked={paused} onChange={setPaused} />
+              <Toggle checked={paused} onChange={handleTogglePause} />
               <span className="body-f" style={{ fontSize: 12.5, color: paused ? C.error : C.textLo }}>
                 {paused ? "Paused" : "Running"}
               </span>
@@ -1746,7 +1809,7 @@ function StoreOverview({ store }) {
           </div>
 
           <div>
-            <label className="body-f" style={labelStyle}>Force a sync now</label>
+            <label className="body-f" style={labelStyle}>Fetch from Shopify now</label>
             <button
               onClick={handleForceSync}
               disabled={syncing || paused}
@@ -1760,11 +1823,19 @@ function StoreOverview({ store }) {
               }}
             >
               <RefreshCw size={14} style={{ animation: syncing ? "spin 1s linear infinite" : "none" }} />
-              {syncing ? "Syncing…" : "Sync now"}
+              {syncing ? "Fetching…" : "Fetch now"}
             </button>
             <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           </div>
         </div>
+        {controlMessage && (
+          <p className="body-f" style={{
+            color: controlMessage.startsWith("Error") ? C.error : C.success,
+            fontSize: 12, marginTop: 14, marginBottom: 0,
+          }}>
+            {controlMessage}
+          </p>
+        )}
       </div>
 
       <div style={cardStyle}>
@@ -1809,8 +1880,13 @@ function StoreOverview({ store }) {
               </span>
             </div>
           </div>
-          <button className="focus-ring body-f" style={saveBtn}>
-            <Check size={14} /> Save
+          <button
+            onClick={handleSaveMarkup}
+            disabled={savingMarkup}
+            className="focus-ring body-f"
+            style={saveBtn}
+          >
+            <Check size={14} /> {savingMarkup ? "Saving…" : "Save"}
           </button>
         </div>
       </div>
