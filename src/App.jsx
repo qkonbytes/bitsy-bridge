@@ -401,48 +401,50 @@ function AdminStores({ onManage }) {
 
     (async () => {
       setLoading(true);
-      const [{ data: clientRows, error: clientsError }, { data: statusRows, error: statusError }] = await Promise.all([
-        supabase.from("clients").select("*").order("name"),
-        supabase.from("client_sync_status").select("*").order("created_at", { ascending: false }),
-      ]);
+      // One call returns every client plus live figures read from each of
+      // their own projects — SKU count, rows queued to push, and when the
+      // Shopify fetch last ran. The control plane's client_sync_status table
+      // isn't used, since nothing writes to it.
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+
+      const { data: summary, error: summaryError } = await supabase.functions.invoke(
+        "admin-clients-summary",
+        {
+          body: {},
+          headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+        }
+      );
 
       if (cancelled) return;
 
-      if (clientsError) {
-        setError(clientsError.message);
+      if (summaryError || summary?.error) {
+        let detail = summaryError?.message || summary?.error || "Unknown error";
+        if (summaryError?.context) {
+          try {
+            const body = await summaryError.context.json();
+            if (body?.error) detail = body.error;
+          } catch {
+            // not JSON — keep the generic message
+          }
+        }
+        setError(detail);
         setLoading(false);
         return;
       }
 
-      // Reduce to the latest status row per client (rows are already newest-first)
-      const latestStatusByClient = {};
-      (statusRows || []).forEach((row) => {
-        if (!latestStatusByClient[row.client_id]) latestStatusByClient[row.client_id] = row;
-      });
-
-      const merged = (clientRows || []).map((c) => {
-        const latest = latestStatusByClient[c.id];
-        let status = "pending";
-        let lastSync = "Never synced";
-        if (c.status === "paused") {
-          status = "paused";
-        } else if (latest) {
-          status = latest.status === "success" ? "healthy" : "error";
-          lastSync = new Date(latest.last_sync_at || latest.created_at).toLocaleString();
-        }
-        return {
-          id: c.id,
-          name: c.name,
-          shopDomain: c.shopify_shop_domain || "—",
-          intervalMinutes: c.sync_interval_minutes,
-          status,
-          lastSync,
-          recordsChanged: latest?.records_changed ?? null,
-          skus: null,  // unknown until we query this client's own project — not wired up yet
-          erp: c.status === "onboarding" ? "Not connected yet" : "—",
-          raw: c,
-        };
-      });
+      const merged = (summary.clients || []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        shopDomain: c.shop_domain || "—",
+        intervalMinutes: c.sync_interval_minutes,
+        status: c.status,
+        lastSync: c.last_fetch_at ? new Date(c.last_fetch_at).toLocaleString() : "Never synced",
+        recordsChanged: c.queued_count,
+        skus: c.sku_count,
+        erp: c.note || "—",
+        raw: { id: c.id, name: c.name },
+      }));
 
       setClients(merged);
       if (statusError) console.warn("client_sync_status fetch issue:", statusError.message);
@@ -548,6 +550,12 @@ function AdminStores({ onManage }) {
               <span className="body-f" style={{ fontSize: 11.5, color: C.textFaint, minWidth: 30 }}>ERP</span>
               <BridgeConnector status={s.status} />
               <span className="body-f" style={{ fontSize: 11.5, color: C.textFaint, minWidth: 46 }}>Shopify</span>
+              <span className="mono" style={{ fontSize: 11.5, color: C.textFaint, minWidth: 130 }}>
+                {s.skus != null ? `${s.skus.toLocaleString()} SKUs` : "—"}
+                {s.recordsChanged ? (
+                  <span style={{ color: C.accent }}> · {s.recordsChanged} queued</span>
+                ) : null}
+              </span>
             </div>
             <div style={{ minWidth: 120, textAlign: "right" }}>
               <StatusBadge status={s.status} />
