@@ -1133,78 +1133,55 @@ function LogTypeTag({ type }) {
   );
 }
 
-function AdminLogs({ fixedStore }) {
-  const [store, setStore] = useState(fixedStore || "all");
-  const activeFilter = fixedStore || store;
+function AdminLogs({ store }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const rows = MOCK_LOGS.filter((l) => activeFilter === "all" || l.store === activeFilter);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const res = await readClientTable(store?.id, "sync_errors", {
+        order: { column: "occurred_at", ascending: false },
+        limit: 200,
+      });
+      if (cancelled) return;
+      setRows(res.rows);
+      setError(res.error);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [store?.id]);
+
+  const message = tableStateMessage({
+    loading, error, rows,
+    emptyText: "No errors logged — nothing has failed during a sync.",
+  });
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <div>
-          <h1 className="disp" style={{ color: C.textHi, fontSize: 22, fontWeight: 700, margin: 0 }}>Logs</h1>
-          <p className="body-f" style={{ color: C.textLo, fontSize: 13, margin: "4px 0 0 0" }}>
-            What changed after each sync run (<span className="mono">nett_changed</span> table)
-          </p>
+      <h1 className="disp" style={{ color: C.textHi, fontSize: 22, fontWeight: 700, margin: "0 0 4px 0" }}>
+        Logs
+      </h1>
+      <p className="body-f" style={{ color: C.textLo, fontSize: 13, margin: "0 0 20px 0" }}>
+        Errors recorded during syncs (<span className="mono">sync_errors</span> table)
+      </p>
+      {message ? (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 24 }}>
+          <p className="body-f" style={{ color: error ? C.error : C.textFaint, fontSize: 13, margin: 0 }}>{message}</p>
         </div>
-        {!fixedStore && (
-          <select
-            value={store}
-            onChange={(e) => setStore(e.target.value)}
-            className="focus-ring body-f"
-            style={{
-              background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
-              padding: "8px 12px", color: C.textHi, fontSize: 13, cursor: "pointer",
-            }}
-          >
-            <option value="all">All stores</option>
-            {MOCK_STORES.map((s) => (
-              <option key={s.id} value={s.name}>{s.name}</option>
-            ))}
-          </select>
-        )}
-      </div>
-      <div style={{ height: 18 }} />
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
-        <div
-          className="body-f"
-          style={{
-            display: "grid", gridTemplateColumns: "0.9fr 1.3fr 0.9fr 0.9fr 0.7fr 0.7fr 0.9fr",
-            padding: "10px 18px", borderBottom: `1px solid ${C.border}`,
-            fontSize: 11.5, color: C.textFaint, fontWeight: 600,
-          }}
-        >
-          <span>Time</span><span>Store</span><span>SKU</span><span>Field</span><span>Old</span><span>New</span><span>Result</span>
-        </div>
-        {rows.length === 0 && (
-          <div className="body-f" style={{ padding: "24px 18px", color: C.textFaint, fontSize: 13 }}>
-            No log entries for this store.
-          </div>
-        )}
-        {rows.map((l, i) => (
-          <div
-            key={i}
-            className="mono"
-            style={{
-              display: "grid", gridTemplateColumns: "0.9fr 1.3fr 0.9fr 0.9fr 0.7fr 0.7fr 0.9fr",
-              padding: "11px 18px", alignItems: "center",
-              borderBottom: i < rows.length - 1 ? `1px solid ${C.border}` : "none",
-              fontSize: 12.5, color: C.textHi,
-            }}
-          >
-            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <Clock size={12} color={C.textFaint} /> {l.time}
-            </span>
-            <span className="body-f" style={{ color: C.textLo }}>{l.store}</span>
-            <span>{l.sku}</span>
-            <span style={{ color: C.textFaint }}>{l.field}</span>
-            <span style={{ color: C.textFaint }}>{l.oldVal}</span>
-            <span>{l.newVal}</span>
-            <span><LogTypeTag type={l.type} /></span>
-          </div>
-        ))}
-      </div>
+      ) : (
+        <DBTable
+          columns={[
+            { key: "occurred_at", label: "When", width: "1.2fr", render: (r) => r.occurred_at ? new Date(r.occurred_at).toLocaleString() : "—" },
+            { key: "source_system", label: "Source", width: "0.7fr", render: (r) => r.source_system || "—" },
+            { key: "sku", label: "SKU", width: "0.9fr", render: (r) => r.sku || "—" },
+            { key: "error_message", label: "Error", width: "2.2fr", render: (r) => r.error_message || "—" },
+          ]}
+          rows={rows}
+        />
+      )}
     </div>
   );
 }
@@ -1958,12 +1935,74 @@ function NotMatched({ store }) {
 }
 
 function LocationMapping({ store }) {
-  const erpLocations = getErpLocationsUsed(store.name);
-  const shopifyLocations = MOCK_SHOPIFY_LOCATIONS[store.name] || [];
+  // The flat shopify_data schema carries five ERP store slots, so these are
+  // the fixed set of ERP locations that can be mapped.
+  const ERP_SLOTS = ["store1", "store2", "store3", "store4", "store5"];
 
-  const [mapping, setMapping] = useState(() =>
-    Object.fromEntries(erpLocations.map((loc, i) => [loc, shopifyLocations[i]?.id || ""]))
-  );
+  const [mappings, setMappings] = useState({});
+  const [shopifyLocations, setShopifyLocations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [loadingLocations, setLoadingLocations] = useState(false);
+  const [savingSlot, setSavingSlot] = useState(null);
+  const [message, setMessage] = useState("");
+
+  // Existing mappings out of the client's own location_mappings table.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const res = await readClientTable(store?.id, "location_mappings", { limit: 50 });
+      if (cancelled) return;
+      const byErp = {};
+      (res.rows || []).forEach((r) => { byErp[r.erp_location] = r; });
+      setMappings(byErp);
+      setError(res.error);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [store?.id]);
+
+  // Shopify's real locations, pulled on demand rather than on every open —
+  // it's a live API call against the store.
+  const loadShopifyLocations = async () => {
+    setLoadingLocations(true);
+    setMessage("");
+    const res = await writeClientControl(store?.id, { action: "fetch_shopify_locations" });
+    setLoadingLocations(false);
+    if (!res.ok) {
+      setMessage(`Error: ${res.error}`);
+      return;
+    }
+    setShopifyLocations(res.result?.locations || []);
+  };
+
+  const saveMapping = async (erpSlot, shopifyLocationId) => {
+    const loc = shopifyLocations.find((l) => l.id === shopifyLocationId);
+    setSavingSlot(erpSlot);
+    const res = await writeClientControl(store?.id, {
+      location_mapping: {
+        erp_location: erpSlot,
+        shopify_location_id: shopifyLocationId || null,
+        shopify_location_name: loc?.name || null,
+      },
+    });
+    setSavingSlot(null);
+    if (!res.ok) {
+      setMessage(`Error: ${res.error}`);
+      return;
+    }
+    setMappings((prev) => ({
+      ...prev,
+      [erpSlot]: {
+        erp_location: erpSlot,
+        shopify_location_id: shopifyLocationId || null,
+        shopify_location_name: loc?.name || null,
+      },
+    }));
+    setMessage(`${erpSlot} mapped.`);
+    setTimeout(() => setMessage(""), 3000);
+  };
 
   const cardStyle = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 };
 
@@ -1972,67 +2011,93 @@ function LocationMapping({ store }) {
       <div className="disp" style={{ color: C.textHi, fontSize: 14, fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
         <MapPin size={15} color={C.accent} /> Location mapping
       </div>
-      <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, margin: "0 0 4px 0" }}>
-        Internal only — determines which ERP location's stock updates which Shopify location.
+      <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, margin: "0 0 16px 0" }}>
+        Internal only — decides which ERP store column's stock updates which Shopify location.
       </p>
-      {shopifyLocations.length === 0 && (
-        <p className="body-f" style={{ color: C.textFaint, fontSize: 12, margin: "0 0 16px 0" }}>
-          Shopify locations will populate automatically once this store is connected via OAuth. Showing placeholder data for now.
-        </p>
-      )}
-      <div style={{ height: 12 }} />
 
-      <div style={cardStyle}>
-        <div
-          className="body-f"
+      <div style={{ marginBottom: 14 }}>
+        <button
+          onClick={loadShopifyLocations}
+          disabled={loadingLocations}
+          className="focus-ring body-f"
           style={{
-            display: "grid", gridTemplateColumns: "1fr 1fr 0.6fr", padding: "0 0 10px 0",
-            borderBottom: `1px solid ${C.border}`, fontSize: 11.5, color: C.textFaint, fontWeight: 600, marginBottom: 12,
+            background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
+            borderRadius: 8, padding: "7px 14px", fontSize: 12.5, cursor: "pointer",
           }}
         >
-          <span>ERP location</span><span>Shopify location</span><span></span>
-        </div>
-        {erpLocations.length === 0 && (
-          <p className="body-f" style={{ color: C.textFaint, fontSize: 13 }}>No ERP locations found for this store yet.</p>
+          {loadingLocations ? "Loading…" : shopifyLocations.length ? "Reload Shopify locations" : "Load Shopify locations"}
+        </button>
+        {shopifyLocations.length > 0 && (
+          <span className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginLeft: 10 }}>
+            {shopifyLocations.length} found
+          </span>
         )}
-        {erpLocations.map((loc, i) => (
-          <div
-            key={loc}
-            style={{
-              display: "grid", gridTemplateColumns: "1fr 1fr 0.6fr", alignItems: "center",
-              padding: "10px 0", borderBottom: i < erpLocations.length - 1 ? `1px solid ${C.border}` : "none",
-            }}
-          >
-            <span className="mono" style={{ color: C.textHi, fontSize: 12.5 }}>{LOCATION_LABEL(loc)}</span>
-            <select
-              value={mapping[loc] || ""}
-              onChange={(e) => setMapping({ ...mapping, [loc]: e.target.value })}
-              className="focus-ring body-f"
-              style={{
-                background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
-                padding: "7px 10px", color: C.textHi, fontSize: 12.5, cursor: "pointer", maxWidth: 260,
-              }}
-            >
-              <option value="">Select a Shopify location…</option>
-              {shopifyLocations.map((sl) => (
-                <option key={sl.id} value={sl.id}>{sl.name}</option>
-              ))}
-            </select>
-            <span style={{ textAlign: "right" }}>
-              <button
-                className="focus-ring body-f"
-                style={{
-                  background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
-                  borderRadius: 7, padding: "5px 11px", fontSize: 11.5, cursor: "pointer",
-                  display: "inline-flex", alignItems: "center", gap: 5,
-                }}
-              >
-                <Check size={12} /> Save
-              </button>
-            </span>
-          </div>
-        ))}
       </div>
+
+      <div style={cardStyle}>
+        <div className="body-f" style={{
+          display: "grid", gridTemplateColumns: "1fr 1.6fr", padding: "0 0 10px 0",
+          borderBottom: `1px solid ${C.border}`, fontSize: 11.5, color: C.textFaint,
+          fontWeight: 600, marginBottom: 12,
+        }}>
+          <span>ERP location</span>
+          <span>Shopify location</span>
+        </div>
+
+        {loading ? (
+          <p className="body-f" style={{ color: C.textFaint, fontSize: 13 }}>Loading…</p>
+        ) : error ? (
+          <p className="body-f" style={{ color: C.error, fontSize: 13 }}>Error: {error}</p>
+        ) : (
+          ERP_SLOTS.map((slot, i) => {
+            const current = mappings[slot];
+            return (
+              <div key={slot} style={{
+                display: "grid", gridTemplateColumns: "1fr 1.6fr", alignItems: "center",
+                padding: "10px 0",
+                borderBottom: i < ERP_SLOTS.length - 1 ? `1px solid ${C.border}` : "none",
+              }}>
+                <span className="mono" style={{ color: C.textHi, fontSize: 12.5 }}>{slot}</span>
+                {shopifyLocations.length === 0 ? (
+                  <span className="body-f" style={{ color: C.textFaint, fontSize: 12.5 }}>
+                    {current?.shopify_location_name
+                      ? `${current.shopify_location_name} (load locations to change)`
+                      : "Load Shopify locations to map this"}
+                  </span>
+                ) : (
+                  <select
+                    value={current?.shopify_location_id || ""}
+                    onChange={(e) => saveMapping(slot, e.target.value)}
+                    disabled={savingSlot === slot}
+                    className="focus-ring body-f"
+                    style={{
+                      background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+                      padding: "7px 10px", color: C.textHi, fontSize: 12.5,
+                      cursor: "pointer", maxWidth: 300,
+                    }}
+                  >
+                    <option value="">Not mapped</option>
+                    {shopifyLocations.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}{l.active === false ? " (inactive)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {message && (
+        <p className="body-f" style={{
+          color: message.startsWith("Error") ? C.error : C.success,
+          fontSize: 12, marginTop: 12,
+        }}>
+          {message}
+        </p>
+      )}
     </div>
   );
 }
@@ -2064,12 +2129,6 @@ function AdminSyncHistory({ store }) {
     emptyText: "No sync runs recorded yet.",
   });
 
-  const duration = (r) => {
-    if (!r.started_at || !r.finished_at) return "—";
-    const secs = (new Date(r.finished_at) - new Date(r.started_at)) / 1000;
-    return `${secs.toFixed(1)}s`;
-  };
-
   return (
     <div>
       <h1 className="disp" style={{ color: C.textHi, fontSize: 22, fontWeight: 700, margin: "0 0 4px 0" }}>
@@ -2085,11 +2144,16 @@ function AdminSyncHistory({ store }) {
       ) : (
         <DBTable
           columns={[
-            { key: "started_at", label: "Started", width: "1.2fr", render: (r) => r.started_at ? new Date(r.started_at).toLocaleString() : "—" },
-            { key: "records_changed", label: "Changed", width: "0.7fr", render: (r) => r.records_changed ?? 0 },
-            { key: "status", label: "Status", width: "0.8fr" },
-            { key: "duration", label: "Duration", width: "0.7fr", render: duration },
-            { key: "error_message", label: "Error", width: "1.6fr", render: (r) => r.error_message || "—" },
+            { key: "started_at", label: "Started", width: "1.3fr", render: (r) => r.started_at ? new Date(r.started_at).toLocaleString() : "—" },
+            { key: "records_processed", label: "Processed", width: "0.8fr", render: (r) => (r.records_processed ?? 0).toLocaleString() },
+            { key: "records_changed", label: "Changed", width: "0.7fr", render: (r) => (r.records_changed ?? 0).toLocaleString() },
+            { key: "status", label: "Status", width: "0.8fr", render: (r) => (
+                <span style={{ color: r.status === "success" ? C.success : r.status === "error" ? C.error : C.textLo }}>
+                  {r.status || "—"}
+                </span>
+              ) },
+            { key: "duration_seconds", label: "Duration", width: "0.7fr", render: (r) => r.duration_seconds != null ? `${Number(r.duration_seconds).toFixed(1)}s` : "—" },
+            { key: "error_message", label: "Error", width: "1.5fr", render: (r) => r.error_message || "—" },
           ]}
           rows={rows}
         />
@@ -2154,7 +2218,7 @@ function StoreDetail({ store, onBack }) {
       {tab === "shopify" && <AdminShopifyDB store={store} />}
       {tab === "erp" && <AdminERPDB store={store} />}
       {tab === "history" && <AdminSyncHistory store={store} />}
-      {tab === "logs" && <AdminLogs fixedStore={store.name} />}
+      {tab === "logs" && <AdminLogs store={store} />}
       {tab === "connections" && <AdminConnections store={store} />}
       {tab === "locations" && <LocationMapping store={store} />}
     </div>
