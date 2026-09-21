@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { supabase, isSupabaseConfigured } from "./lib/supabaseClient";
 import { createClient } from "@supabase/supabase-js";
 import { buildShopifyAuthUrl } from "./lib/shopifyOAuth";
-import { readClientTable, writeClientControl, tableStateMessage } from "./lib/adminData";
+import { readClientTable, writeClientControl, callAdminFunction, tableStateMessage } from "./lib/adminData";
 import {
   LayoutGrid,
   Activity,
@@ -384,12 +384,262 @@ function Sidebar({ role, active, setActive }) {
 }
 
 // ---------- Admin: Stores list ----------
+// ---------- Admin: Add Store (provisions a whole client project) ----------
+// Drives admin-provision-client through its three steps. Project creation
+// takes a minute or two, so the middle step polls until Supabase reports the
+// project healthy. Can also resume a client whose setup was interrupted.
+function AddStoreModal({ resumeClient, onClose, onDone }) {
+  const [name, setName] = useState("");
+  const [shopDomain, setShopDomain] = useState("");
+  const [phase, setPhase] = useState(resumeClient ? "resuming" : "form");
+  // form | creating | waiting | finalizing | done | error | resuming
+  const [clientId, setClientId] = useState(resumeClient?.id || null);
+  const [projectStatus, setProjectStatus] = useState("");
+  const [error, setError] = useState("");
+  const [elapsed, setElapsed] = useState(0);
+
+  const POLL_MS = 5000;
+  const MAX_WAIT_MS = 6 * 60 * 1000;
+
+  const finalize = async (id) => {
+    setPhase("finalizing");
+    const res = await callAdminFunction("admin-provision-client", { step: "finalize", client_id: id });
+    if (!res.ok) {
+      setError(res.error);
+      setPhase("error");
+      return;
+    }
+    setPhase("done");
+  };
+
+  const waitForProject = async (id) => {
+    setPhase("waiting");
+    const started = Date.now();
+    while (Date.now() - started < MAX_WAIT_MS) {
+      const res = await callAdminFunction("admin-provision-client", { step: "check_status", client_id: id });
+      setElapsed(Math.round((Date.now() - started) / 1000));
+      if (!res.ok) {
+        setError(res.error);
+        setPhase("error");
+        return;
+      }
+      setProjectStatus(res.data.status);
+      if (res.data.ready) {
+        await finalize(id);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, POLL_MS));
+    }
+    setError("The project hasn't come up after 6 minutes. It may still be starting — close this and use Resume setup on the store in a few minutes.");
+    setPhase("error");
+  };
+
+  // Resuming an interrupted setup: check the project, then finalize.
+  useEffect(() => {
+    if (phase === "resuming" && clientId) waitForProject(clientId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const start = async () => {
+    setError("");
+    if (!name.trim()) {
+      setError("Store name is required.");
+      return;
+    }
+    setPhase("creating");
+    const res = await callAdminFunction("admin-provision-client", {
+      step: "create_project",
+      name: name.trim(),
+      shop_domain: shopDomain.trim(),
+    });
+    if (!res.ok) {
+      setError(res.error);
+      setPhase("form");
+      return;
+    }
+    setClientId(res.data.client_id);
+    await waitForProject(res.data.client_id);
+  };
+
+  const retry = () => {
+    setError("");
+    if (clientId) waitForProject(clientId);
+    else setPhase("form");
+  };
+
+  const busy = ["creating", "waiting", "finalizing", "resuming"].includes(phase);
+
+  const inputStyle = {
+    width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+    padding: "9px 12px", color: C.textHi, fontSize: 13, boxSizing: "border-box",
+  };
+
+  const steps = [
+    { key: "creating", label: "Create Supabase project" },
+    { key: "waiting", label: "Wait for project to start" },
+    { key: "finalizing", label: "Tables, function, cron & credentials" },
+  ];
+  const order = ["creating", "waiting", "finalizing", "done"];
+  const currentIdx = order.indexOf(phase === "resuming" ? "waiting" : phase);
+
+  return (
+    <div
+      onClick={busy ? undefined : onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 480, background: C.surface, border: `1px solid ${C.border}`,
+          borderRadius: 12, padding: 24,
+        }}
+      >
+        <div className="disp" style={{ color: C.textHi, fontSize: 17, fontWeight: 700, marginBottom: 4 }}>
+          {resumeClient ? `Resume setup — ${resumeClient.name}` : "Add store"}
+        </div>
+        <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, margin: "0 0 18px 0" }}>
+          Creates the client's own Supabase project with everything it needs. The Shopify app is still set up manually afterwards.
+        </p>
+
+        {phase === "form" && (
+          <>
+            <label className="body-f" style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 6, display: "block" }}>
+              Store name
+            </label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="focus-ring body-f"
+              style={{ ...inputStyle, marginBottom: 12 }}
+              placeholder="e.g. CentParts"
+              autoFocus
+            />
+            <label className="body-f" style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 6, display: "block" }}>
+              Shopify domain (optional — can be added later)
+            </label>
+            <input
+              value={shopDomain}
+              onChange={(e) => setShopDomain(e.target.value)}
+              className="focus-ring mono"
+              style={{ ...inputStyle, marginBottom: 16 }}
+              placeholder="their-store.myshopify.com"
+            />
+            <p className="body-f" style={{ color: C.textFaint, fontSize: 11.5, margin: "0 0 16px 0" }}>
+              This creates a billable Supabase project in your organisation.
+            </p>
+          </>
+        )}
+
+        {phase !== "form" && (
+          <div style={{ marginBottom: 16 }}>
+            {steps.map((s, i) => {
+              const idx = order.indexOf(s.key);
+              const doneStep = currentIdx > idx || phase === "done";
+              const active = currentIdx === idx && phase !== "error";
+              const failed = phase === "error" && currentIdx === idx;
+              return (
+                <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0" }}>
+                  <span style={{
+                    width: 18, height: 18, borderRadius: "50%", flexShrink: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: doneStep ? C.successDim : failed ? C.errorDim : "transparent",
+                    border: `1px solid ${doneStep ? C.success : failed ? C.error : active ? C.accent : C.borderLight}`,
+                  }}>
+                    {doneStep && <Check size={11} color={C.success} />}
+                    {active && <Loader2 size={11} color={C.accent} style={{ animation: "spin 1s linear infinite" }} />}
+                  </span>
+                  <span className="body-f" style={{
+                    fontSize: 13,
+                    color: doneStep ? C.textHi : active ? C.textHi : failed ? C.error : C.textFaint,
+                  }}>
+                    {s.label}
+                    {active && s.key === "waiting" && (
+                      <span className="mono" style={{ color: C.textFaint, fontSize: 11, marginLeft: 8 }}>
+                        {projectStatus || "…"} · {elapsed}s
+                      </span>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          </div>
+        )}
+
+        {phase === "done" && (
+          <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, marginBottom: 16 }}>
+            <p className="body-f" style={{ color: C.success, fontSize: 13, margin: "0 0 6px 0" }}>
+              Project ready.
+            </p>
+            <p className="body-f" style={{ color: C.textFaint, fontSize: 12, margin: 0 }}>
+              Next, manually: create the Shopify custom app for this store, release a version, install it via the signed link, then enter its Client ID and Secret under Manage → Connections and click Connect Shopify.
+            </p>
+          </div>
+        )}
+
+        {error && (
+          <div className="body-f" style={{
+            color: C.error, fontSize: 12, background: C.errorDim,
+            padding: "8px 10px", borderRadius: 6, marginBottom: 16, wordBreak: "break-word",
+          }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          {phase === "form" && (
+            <>
+              <button onClick={onClose} className="focus-ring body-f" style={{
+                background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
+                borderRadius: 8, padding: "8px 14px", fontSize: 13, cursor: "pointer",
+              }}>Cancel</button>
+              <button onClick={start} className="focus-ring body-f" style={{
+                background: C.accent, border: "none", color: "#FFFFFF",
+                borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+              }}>Create project</button>
+            </>
+          )}
+          {phase === "error" && (
+            <>
+              <button onClick={onClose} className="focus-ring body-f" style={{
+                background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
+                borderRadius: 8, padding: "8px 14px", fontSize: 13, cursor: "pointer",
+              }}>Close</button>
+              <button onClick={retry} className="focus-ring body-f" style={{
+                background: C.accent, border: "none", color: "#FFFFFF",
+                borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+              }}>Retry</button>
+            </>
+          )}
+          {phase === "done" && (
+            <button onClick={onDone} className="focus-ring body-f" style={{
+              background: C.accent, border: "none", color: "#FFFFFF",
+              borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+            }}>Done</button>
+          )}
+          {busy && (
+            <span className="body-f" style={{ color: C.textFaint, fontSize: 12, alignSelf: "center" }}>
+              Keep this open…
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AdminStores({ onManage }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [resumeClient, setResumeClient] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -443,16 +693,18 @@ function AdminStores({ onManage }) {
         recordsChanged: c.queued_count,
         skus: c.sku_count,
         erp: c.note || "—",
+        provisioningStatus: c.provisioning_status,
+        provisioningError: c.provisioning_error,
         raw: { id: c.id, name: c.name },
       }));
 
       setClients(merged);
-      if (statusError) console.warn("client_sync_status fetch issue:", statusError.message);
+      setError(null);
       setLoading(false);
     })();
 
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
 
   const filtered = useMemo(() => {
     return clients.filter((s) => {
@@ -472,6 +724,7 @@ function AdminStores({ onManage }) {
           </p>
         </div>
         <button
+          onClick={() => { setResumeClient(null); setShowAdd(true); }}
           className="focus-ring body-f"
           style={{
             display: "flex", alignItems: "center", gap: 6,
@@ -561,19 +814,41 @@ function AdminStores({ onManage }) {
               <StatusBadge status={s.status} />
               <div className="mono" style={{ color: C.textFaint, fontSize: 11, marginTop: 5 }}>{s.lastSync}</div>
             </div>
-            <button
-              onClick={() => onManage(s)}
-              className="focus-ring body-f"
-              style={{
-                background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textLo,
-                borderRadius: 7, padding: "6px 12px", fontSize: 12.5, cursor: "pointer",
-              }}
-            >
-              Manage
-            </button>
+            {s.provisioningStatus && s.provisioningStatus !== "complete" ? (
+              <button
+                onClick={() => { setResumeClient({ id: s.id, name: s.name }); setShowAdd(true); }}
+                title={s.provisioningError || ""}
+                className="focus-ring body-f"
+                style={{
+                  background: "transparent", border: `1px solid ${C.accent}`, color: C.accent,
+                  borderRadius: 7, padding: "6px 12px", fontSize: 12.5, cursor: "pointer",
+                }}
+              >
+                Resume setup
+              </button>
+            ) : (
+              <button
+                onClick={() => onManage(s)}
+                className="focus-ring body-f"
+                style={{
+                  background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textLo,
+                  borderRadius: 7, padding: "6px 12px", fontSize: 12.5, cursor: "pointer",
+                }}
+              >
+                Manage
+              </button>
+            )}
           </div>
         ))}
       </div>
+
+      {showAdd && (
+        <AddStoreModal
+          resumeClient={resumeClient}
+          onClose={() => { setShowAdd(false); setResumeClient(null); setReloadKey((k) => k + 1); }}
+          onDone={() => { setShowAdd(false); setResumeClient(null); setReloadKey((k) => k + 1); }}
+        />
+      )}
     </div>
   );
 }
