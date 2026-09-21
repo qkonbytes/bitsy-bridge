@@ -72,6 +72,33 @@ export async function writeClientControl(internalClientId, payload) {
   return { ok: true, result: data };
 }
 
+
+// Calls any admin-only control-plane Edge Function with the signed-in
+// admin's session, surfacing the function's real error message.
+export async function callAdminFunction(name, body) {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData?.session?.access_token;
+
+  const { data, error } = await supabase.functions.invoke(name, {
+    body,
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+  });
+
+  if (error || data?.error) {
+    let detail = error?.message || data?.error || "Unknown error";
+    if (error?.context) {
+      try {
+        const b = await error.context.json();
+        if (b?.error) detail = b.error;
+      } catch {
+        // not JSON — keep the generic message
+      }
+    }
+    return { ok: false, error: detail };
+  }
+  return { ok: true, data };
+}
+
 // Small shared shape for the "loading / error / empty" states these tables
 // all need, so each tab doesn't reinvent it.
 export function tableStateMessage({ loading, error, rows, emptyText }) {
