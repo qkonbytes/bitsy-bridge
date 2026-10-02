@@ -3,6 +3,7 @@ import { supabase, isSupabaseConfigured } from "./lib/supabaseClient";
 import { createClient } from "@supabase/supabase-js";
 import { buildShopifyAuthUrl } from "./lib/shopifyOAuth";
 import { readClientTable, writeClientControl, callAdminFunction, tableStateMessage } from "./lib/adminData";
+import DashboardSection from "./DashboardSection";
 import {
   LayoutGrid,
   Activity,
@@ -288,20 +289,216 @@ function StatusBadge({ status }) {
   );
 }
 
+// ============================================================
+// DASHBOARD SECTION
+// ============================================================
+// The analytics half of Bitsy. These screens are built but not yet reading
+// live data — each one states what it will show and where that data will come
+// from, rather than displaying invented figures. Credentials for Meta and
+// Google live in the client's own project, in dashboard_credentials.
+
+function DashSectionHeader({ title, subtitle }) {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <h1 className="disp" style={{ color: C.textHi, fontSize: 22, fontWeight: 700, margin: 0 }}>
+        {title}
+      </h1>
+      {subtitle && (
+        <p className="body-f" style={{ color: C.textLo, fontSize: 13, margin: "4px 0 0 0" }}>
+          {subtitle}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Placeholder used until a screen is reading real figures. Deliberately shows
+// no numbers at all — a dashboard that invents data is worse than an empty one.
+function NotWiredYet({ what, source }) {
+  return (
+    <div style={{
+      background: C.surface, border: `1px dashed ${C.borderLight}`,
+      borderRadius: 10, padding: 28, textAlign: "center",
+    }}>
+      <p className="body-f" style={{ color: C.textHi, fontSize: 14, margin: "0 0 6px 0" }}>
+        {what}
+      </p>
+      <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, margin: 0 }}>
+        Not connected to live data yet. {source}
+      </p>
+    </div>
+  );
+}
+
+function MetricCard({ label, hint }) {
+  return (
+    <div style={{
+      flex: 1, minWidth: 150, background: C.surface,
+      border: `1px solid ${C.border}`, borderRadius: 10, padding: 18,
+    }}>
+      <div className="body-f" style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 6 }}>
+        {label}
+      </div>
+      <div className="mono" style={{ color: C.textFaint, fontSize: 18 }}>—</div>
+      {hint && (
+        <div className="body-f" style={{ color: C.textFaint, fontSize: 10.5, marginTop: 6 }}>
+          {hint}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DashboardOverview() {
+  return (
+    <div>
+      <DashSectionHeader
+        title="Overview"
+        subtitle="Sales, spend and return across every connected platform"
+      />
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 18 }}>
+        <MetricCard label="Revenue" hint="Shopify" />
+        <MetricCard label="Orders" hint="Shopify" />
+        <MetricCard label="Ad spend" hint="Meta + Google" />
+        <MetricCard label="ROAS" hint="Revenue ÷ spend" />
+      </div>
+      <NotWiredYet
+        what="Combined performance across Shopify, Meta and Google."
+        source="Will read the client's own project once the platform syncs are built."
+      />
+    </div>
+  );
+}
+
+function DashboardSales() {
+  return (
+    <div>
+      <DashSectionHeader title="Sales" subtitle="Shopify orders, revenue and products" />
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 18 }}>
+        <MetricCard label="Revenue" />
+        <MetricCard label="Orders" />
+        <MetricCard label="Average order value" />
+        <MetricCard label="Units sold" />
+      </div>
+      <NotWiredYet
+        what="Shopify sales performance over time, by product and channel."
+        source="Shopify is already connected for the bridge, so this reuses that token rather than a separate connection."
+      />
+    </div>
+  );
+}
+
+function DashboardMeta() {
+  return (
+    <div>
+      <DashSectionHeader title="Meta Ads" subtitle="Campaign spend, reach and conversions" />
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 18 }}>
+        <MetricCard label="Spend" />
+        <MetricCard label="Impressions" />
+        <MetricCard label="Clicks" />
+        <MetricCard label="Purchases" />
+      </div>
+      <NotWiredYet
+        what="Meta ad account performance, by campaign and ad set."
+        source="Requires a Meta connection on the Connections page."
+      />
+    </div>
+  );
+}
+
+function DashboardGoogle() {
+  return (
+    <div>
+      <DashSectionHeader title="Google" subtitle="Analytics traffic and Ads performance" />
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 18 }}>
+        <MetricCard label="Sessions" hint="Analytics" />
+        <MetricCard label="Conversions" hint="Analytics" />
+        <MetricCard label="Ad spend" hint="Google Ads" />
+        <MetricCard label="Cost per conversion" hint="Google Ads" />
+      </div>
+      <NotWiredYet
+        what="Google Analytics traffic alongside Google Ads spend."
+        source="Requires a Google connection on the Connections page."
+      />
+    </div>
+  );
+}
+
+// Shows which analytics platforms are connected. Reads the
+// dashboard_connections view, which deliberately exposes status only and
+// never a token.
+function DashboardConnections({ projectInfo }) {
+  const PLATFORMS = [
+    { key: "shopify", label: "Shopify", note: "Shared with the bridge — connected by Q-KON Bytes." },
+    { key: "meta", label: "Meta", note: "Ad account for spend and conversion reporting." },
+    { key: "google", label: "Google", note: "Analytics property and Ads account." },
+  ];
+
+  return (
+    <div>
+      <DashSectionHeader
+        title="Connections"
+        subtitle="Which analytics accounts feed this dashboard"
+      />
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {PLATFORMS.map((p) => (
+          <div key={p.key} style={{
+            background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10,
+            padding: 18, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
+          }}>
+            <div>
+              <div className="disp" style={{ color: C.textHi, fontSize: 14, fontWeight: 600 }}>
+                {p.label}
+              </div>
+              <div className="body-f" style={{ color: C.textFaint, fontSize: 12, marginTop: 3 }}>
+                {p.note}
+              </div>
+            </div>
+            <span className="body-f" style={{
+              fontSize: 11.5, fontWeight: 600, color: C.textFaint,
+              border: `1px solid ${C.borderLight}`, padding: "3px 9px", borderRadius: 20,
+            }}>
+              Not connected
+            </span>
+          </div>
+        ))}
+      </div>
+      <div style={{ height: 14 }} />
+      <NotWiredYet
+        what="Connection status comes from dashboard_connections in this client's own project."
+        source="Connecting Meta and Google needs their OAuth flows, which run server-side as Edge Functions — same pattern as Shopify."
+      />
+    </div>
+  );
+}
+
+function DashboardSettings() {
+  return (
+    <div>
+      <DashSectionHeader title="Settings" subtitle="Reporting preferences" />
+      <NotWiredYet
+        what="Currency, timezone, attribution window and report scheduling."
+        source="Will be stored alongside the other client settings."
+      />
+    </div>
+  );
+}
+
 // ---------- Sidebar ----------
-function Sidebar({ role, active, setActive }) {
+function Sidebar({ role, active, setActive, onBackToChooser }) {
   const adminNav = [
     { key: "stores", label: "Stores", icon: LayoutGrid },
     { key: "settings", label: "Settings", icon: Settings },
   ];
-  const customerNav = [
-    { key: "dashboard", label: "Dashboard", icon: LayoutGrid },
+  // Bridge: the ERP to Shopify sync.
+  const bridgeNav = [
+    { key: "dashboard", label: "Overview", icon: LayoutGrid },
     { key: "shopifydb", label: "Shopify", icon: ShoppingBag },
     { key: "erpdb", label: "ERP", icon: Database },
     { key: "history", label: "Sync History", icon: Activity },
     { key: "settings", label: "Settings", icon: Settings },
   ];
-  const nav = role === "admin" ? adminNav : customerNav;
+  const nav = role === "admin" ? adminNav : bridgeNav;
 
   return (
     <div
@@ -330,7 +527,7 @@ function Sidebar({ role, active, setActive }) {
           <ArrowRightLeft size={14} color={C.accent} />
         </div>
         <span className="disp" style={{ color: C.textHi, fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em" }}>
-          bitsy_bridge
+          Bitsy
         </span>
       </div>
       <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -366,6 +563,20 @@ function Sidebar({ role, active, setActive }) {
         })}
       </nav>
       <div style={{ marginTop: "auto", paddingTop: 20 }}>
+        {onBackToChooser && (
+          <button
+            onClick={onBackToChooser}
+            className="focus-ring body-f"
+            style={{
+              width: "100%", display: "flex", alignItems: "center", gap: 7,
+              background: "transparent", border: `1px solid ${C.borderLight}`,
+              color: C.textLo, borderRadius: 7, padding: "7px 10px",
+              fontSize: 12, cursor: "pointer", marginBottom: 8,
+            }}
+          >
+            <ChevronLeft size={13} /> Switch section
+          </button>
+        )}
         <div
           className="body-f"
           style={{
@@ -376,7 +587,7 @@ function Sidebar({ role, active, setActive }) {
             borderRadius: 7,
           }}
         >
-          {role === "admin" ? "Admin access" : "Coastal Supply Co."}
+          {role === "admin" ? "Admin access" : "Bridge"}
         </div>
       </div>
     </div>
@@ -695,7 +906,7 @@ function AdminStores({ onManage }) {
         erp: c.note || "—",
         provisioningStatus: c.provisioning_status,
         provisioningError: c.provisioning_error,
-        raw: { id: c.id, name: c.name },
+        raw: { id: c.id, name: c.name, has_bridge: c.has_bridge, has_dashboard: c.has_dashboard },
       }));
 
       setClients(merged);
@@ -866,6 +1077,26 @@ function AdminConnections({ store, onStoreUpdated }) {
   const [connectError, setConnectError] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
   const [installLink, setInstallLink] = useState("");
+  const [sectionFlags, setSectionFlags] = useState({
+    has_bridge: raw.has_bridge !== false,
+    has_dashboard: raw.has_dashboard === true,
+  });
+  const [sectionMessage, setSectionMessage] = useState("");
+
+  // Written directly to the control plane: admins have an update policy on
+  // clients, so this needs no relay.
+  const saveSection = async (column, next) => {
+    setSectionFlags((prev) => ({ ...prev, [column]: next }));
+    const { error } = await supabase.from("clients").update({ [column]: next }).eq("id", store.id);
+    if (error) {
+      setSectionFlags((prev) => ({ ...prev, [column]: !next }));  // put it back
+      setSectionMessage(`Error: ${error.message}`);
+    } else {
+      setSectionMessage("Saved.");
+      onStoreUpdated?.();
+    }
+    setTimeout(() => setSectionMessage(""), 3000);
+  };
 
   const refetchClient = async () => {
     const { data, error } = await supabase.from("clients").select("*").eq("id", store.id).maybeSingle();
@@ -947,6 +1178,27 @@ function AdminConnections({ store, onStoreUpdated }) {
   };
 
   const handleConnect = () => {
+    // The OAuth flow has to start and finish on the same origin: the CSRF
+    // state is kept in sessionStorage, which browsers scope per origin. If the
+    // admin is on a different domain to the one registered with Shopify, the
+    // state would be gone on return and the callback would report a vague
+    // verification failure. Say so plainly instead.
+    const redirectUri = import.meta.env.VITE_SHOPIFY_REDIRECT_URI
+      || `${window.location.origin}/oauth/callback`;
+    let redirectOrigin = window.location.origin;
+    try {
+      redirectOrigin = new URL(redirectUri).origin;
+    } catch {
+      // malformed env var — fall through and let the normal validation complain
+    }
+    if (redirectOrigin !== window.location.origin) {
+      setConnectError(
+        `Shopify sends the authorisation back to ${redirectOrigin}, so connecting has to be done there. `
+        + `Open this client's Connections page on ${redirectOrigin} and click Connect Shopify again.`
+      );
+      return;
+    }
+
     if (!shopDomain.trim()) {
       setConnectError("Enter and save a shop domain first.");
       return;
@@ -980,6 +1232,38 @@ function AdminConnections({ store, onStoreUpdated }) {
       </p>
 
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+        <div style={cardStyle}>
+          <div className="disp" style={{ color: C.textHi, fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
+            Bitsy sections
+          </div>
+          <p className="body-f" style={{ color: C.textFaint, fontSize: 11.5, margin: "0 0 14px 0" }}>
+            What this client sees when they sign in.
+          </p>
+          {[
+            ["has_bridge", "Bridge", "ERP to Shopify sync"],
+            ["has_dashboard", "Dashboard", "Meta, Google and sales analytics"],
+          ].map(([col, label, note]) => (
+            <div key={col} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <Toggle
+                checked={sectionFlags[col]}
+                onChange={(next) => saveSection(col, next)}
+              />
+              <div>
+                <div className="body-f" style={{ color: C.textHi, fontSize: 12.5 }}>{label}</div>
+                <div className="body-f" style={{ color: C.textFaint, fontSize: 11 }}>{note}</div>
+              </div>
+            </div>
+          ))}
+          {sectionMessage && (
+            <p className="body-f" style={{
+              color: sectionMessage.startsWith("Error") ? C.error : C.success,
+              fontSize: 11.5, margin: "4px 0 0 0",
+            }}>
+              {sectionMessage}
+            </p>
+          )}
+        </div>
+
         <div style={cardStyle}>
           <div className="disp" style={{ color: C.textHi, fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
             ERP source — {store?.name}
@@ -1505,7 +1789,7 @@ function UnifiedLogin({ onResolved, onNotFound, onSkip }) {
           <div style={{ width: 26, height: 26, borderRadius: 6, background: C.accentDim, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <ArrowRightLeft size={14} color={C.accent} />
           </div>
-          <span className="disp" style={{ color: C.textHi, fontSize: 15, fontWeight: 700 }}>bitsy_bridge</span>
+          <span className="disp" style={{ color: C.textHi, fontSize: 15, fontWeight: 700 }}>Bitsy</span>
         </div>
 
         <label className="body-f" style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 6, display: "block" }}>Email</label>
@@ -1593,7 +1877,7 @@ function PasswordStep({ email, label, authClient, onSignedIn, onBack }) {
           <div style={{ width: 26, height: 26, borderRadius: 6, background: C.accentDim, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <ArrowRightLeft size={14} color={C.accent} />
           </div>
-          <span className="disp" style={{ color: C.textHi, fontSize: 15, fontWeight: 700 }}>bitsy_bridge</span>
+          <span className="disp" style={{ color: C.textHi, fontSize: 15, fontWeight: 700 }}>Bitsy</span>
         </div>
         <p className="body-f" style={{ color: C.textFaint, fontSize: 12, margin: "0 0 20px 0" }}>{label} · {email}</p>
 
@@ -1825,7 +2109,7 @@ function AuthGate({ children, onPreview }) {
     return (
       <PasswordStep
         email={email}
-        label={accountType === "admin" ? "bitsy_bridge admin" : resolved?.client_name}
+        label={accountType === "admin" ? "Bitsy admin" : resolved?.client_name}
         authClient={authClient}
         onSignedIn={handleSignedIn}
         onBack={resetToEmail}
@@ -1833,8 +2117,19 @@ function AuthGate({ children, onPreview }) {
     );
   }
 
+  // Which halves of Bitsy this account can see. Platform admins always get
+  // both; a client gets whatever their clients row allows, as returned by
+  // resolve_login. Defaults to bridge-only so an older resolve_login that
+  // doesn't return the flags still behaves exactly as before.
+  const sections = accountType === "admin"
+    ? { bridge: true, dashboard: true }
+    : {
+        bridge: resolved?.has_bridge !== false,
+        dashboard: resolved?.has_dashboard === true,
+      };
+
   // authorized
-  return children(accountType, session, resolved, handleSignOut);
+  return children(accountType, session, resolved, handleSignOut, sections);
 }
 
 
@@ -2189,7 +2484,7 @@ function NotMatched({ store }) {
         )}
       </div>
       <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, margin: "0 0 16px 0" }}>
-        ERP part numbers with no matching SKU in Shopify — never pushed, since bitsy_bridge doesn't create new Shopify products.
+        ERP part numbers with no matching SKU in Shopify — never pushed, since Bitsy doesn't create new Shopify products.
       </p>
       {message ? (
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 24 }}>
@@ -3112,7 +3407,7 @@ function CustomerNotMatched() {
       ) : (
         <>
           <p className="body-f" style={{ color: C.textFaint, fontSize: 12, margin: "0 0 12px 0" }}>
-            These aren't synced — bitsy_bridge never creates new Shopify products. Add the product in Shopify with a matching SKU, or contact us at enquiries@qkonbytes.com.
+            These aren't synced — Bitsy never creates new Shopify products. Add the product in Shopify with a matching SKU, or contact us at enquiries@qkonbytes.com.
           </p>
           <DBTable
             columns={[
@@ -3330,10 +3625,144 @@ function CustomerHistory({ storeName = "Coastal Supply Co." }) {
   );
 }
 
+// Shown when a client account exists but has been granted neither section.
+function NoSections({ email, onSignOut }) {
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <style>{FONTS}</style>
+      <div style={{ textAlign: "center", maxWidth: 360 }}>
+        <Lock size={22} color={C.textFaint} style={{ marginBottom: 12 }} />
+        <p className="body-f" style={{ color: C.textHi, fontSize: 14, marginBottom: 6 }}>
+          No sections are enabled for this account
+        </p>
+        <p className="body-f" style={{ color: C.textFaint, fontSize: 12.5, marginBottom: 18 }}>
+          {email} signed in successfully, but neither Bridge nor Dashboard is switched on.
+          Contact us at enquiries@qkonbytes.com.
+        </p>
+        <button
+          onClick={onSignOut}
+          className="focus-ring body-f"
+          style={{
+            background: "transparent", border: `1px solid ${C.borderLight}`, color: C.textHi,
+            borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer",
+          }}
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Shown straight after login when an account has access to more than one
+// section. With only one section the app goes straight there, so nobody is
+// made to click through a page offering a single choice.
+function SectionChooser({ clientName, email, sections, onChoose, onSignOut }) {
+  const options = [
+    {
+      key: "bridge",
+      title: "Bridge",
+      blurb: "Keep Shopify in step with your ERP — stock, pricing and sync history.",
+      accent: C.accent,
+      icon: ArrowRightLeft,
+      available: sections.bridge,
+    },
+    {
+      key: "dashboard",
+      title: "Dashboard",
+      blurb: "Sales, ad spend and return across Shopify, Google and Meta.",
+      accent: "#C6F24E",
+      icon: LayoutGrid,
+      available: sections.dashboard,
+    },
+  ].filter((o) => o.available);
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: C.bg, display: "flex",
+      flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24,
+    }}>
+      <style>{FONTS}</style>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
+        <div style={{
+          width: 28, height: 28, borderRadius: 7, background: C.accentDim,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <ArrowRightLeft size={15} color={C.accent} />
+        </div>
+        <span className="disp" style={{ color: C.textHi, fontSize: 17, fontWeight: 700 }}>Bitsy</span>
+      </div>
+
+      <p className="body-f" style={{ color: C.textLo, fontSize: 13.5, margin: "0 0 4px 0" }}>
+        {clientName ? `Welcome back, ${clientName}` : "Welcome back"}
+      </p>
+      <p className="body-f" style={{ color: C.textFaint, fontSize: 12, margin: "0 0 30px 0" }}>
+        Where would you like to go?
+      </p>
+
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", justifyContent: "center" }}>
+        {options.map((o) => {
+          const Icon = o.icon;
+          return (
+            <button
+              key={o.key}
+              onClick={() => onChoose(o.key)}
+              className="focus-ring"
+              style={{
+                width: 268, textAlign: "left", cursor: "pointer",
+                background: C.surface, border: `1px solid ${C.border}`,
+                borderRadius: 14, padding: 24,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = o.accent;
+                e.currentTarget.style.background = C.surfaceHover;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = C.border;
+                e.currentTarget.style.background = C.surface;
+              }}
+            >
+              <div style={{
+                width: 40, height: 40, borderRadius: 10, marginBottom: 16,
+                background: `${o.accent}22`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <Icon size={19} color={o.accent} />
+              </div>
+              <div className="disp" style={{ color: C.textHi, fontSize: 17, fontWeight: 700, marginBottom: 7 }}>
+                {o.title}
+              </div>
+              <div className="body-f" style={{ color: C.textLo, fontSize: 12.5, lineHeight: 1.55 }}>
+                {o.blurb}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ marginTop: 34, display: "flex", alignItems: "center", gap: 14 }}>
+        <span className="mono" style={{ fontSize: 11.5, color: C.textFaint }}>{email}</span>
+        <button
+          onClick={onSignOut}
+          className="focus-ring body-f"
+          style={{
+            background: "transparent", border: "none", color: C.textFaint,
+            fontSize: 11.5, cursor: "pointer", textDecoration: "underline",
+          }}
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---------- App ----------
 export default function BitsyBridgeDashboard() {
   const [adminActive, setAdminActive] = useState("stores");
   const [customerActive, setCustomerActive] = useState("dashboard");
+  const [chosenSection, setChosenSection] = useState(null);  // null = chooser
   const [selectedStore, setSelectedStore] = useState(null);
   const [customerPreview, setCustomerPreview] = useState(false); // dev-only: no client project exists yet to log into
 
@@ -3353,8 +3782,9 @@ export default function BitsyBridgeDashboard() {
     if (customerActive === "erpdb") return <CustomerERPDB />;
     if (customerActive === "history") return <CustomerHistory />;
     if (customerActive === "settings") return <CustomerSettings clientRole={clientRole} projectInfo={projectInfo} />;
-    return null;
+    return <CustomerDashboard />;
   };
+
 
   const AdminShell = ({ session, onSignOut }) => (
     <div style={{ background: C.bg, minHeight: "100vh", display: "flex" }}>
@@ -3391,10 +3821,16 @@ export default function BitsyBridgeDashboard() {
     </div>
   );
 
-  const CustomerShell = ({ session, onSignOut, clientRole, storeName, resolved, preview }) => (
+  const CustomerShell = ({ session, onSignOut, clientRole, storeName, resolved, preview,
+                          canSwitch = false }) => (
     <div style={{ background: C.bg, minHeight: "100vh", display: "flex" }}>
       <style>{FONTS}</style>
-      <Sidebar role="customer" active={customerActive} setActive={setCustomerActive} />
+      <Sidebar
+        role="customer"
+        active={customerActive}
+        setActive={setCustomerActive}
+        onBackToChooser={canSwitch ? () => setChosenSection(null) : null}
+      />
       <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
         <div
           style={{
@@ -3433,25 +3869,83 @@ export default function BitsyBridgeDashboard() {
     </div>
   );
 
+  // Chooser, then the chosen section. Shared by the preview and the real
+  // signed-in path so both behave identically.
+  const renderCustomer = ({ session, resolved, sections, onSignOut, preview }) => {
+    const email = session?.user?.email || "";
+    const clientName = resolved?.client_name;
+    const available = [sections.bridge && "bridge", sections.dashboard && "dashboard"].filter(Boolean);
+
+    // With a single section there is no choice to make — go straight in.
+    const section = chosenSection || (available.length === 1 ? available[0] : null);
+    const canSwitch = available.length > 1;
+
+    if (!section) {
+      return (
+        <SectionChooser
+          clientName={clientName}
+          email={email}
+          sections={sections}
+          onChoose={setChosenSection}
+          onSignOut={onSignOut}
+        />
+      );
+    }
+
+    // Guard against a section being revoked while someone is still in it.
+    if (!sections[section]) {
+      setChosenSection(null);
+      return null;
+    }
+
+    if (section === "dashboard") {
+      return (
+        <DashboardSection
+          clientName={clientName}
+          email={email}
+          onSignOut={onSignOut}
+          onBackToChooser={canSwitch ? () => setChosenSection(null) : null}
+        />
+      );
+    }
+
+    return (
+      <CustomerShell
+        session={session}
+        onSignOut={onSignOut}
+        clientRole={resolved?.client_role || "staff"}
+        storeName={clientName}
+        resolved={resolved}
+        preview={preview}
+        canSwitch={canSwitch}
+      />
+    );
+  };
+
   if (customerPreview) {
-    return <CustomerShell clientRole="admin" preview />;
+    // Dev preview offers both sections so the whole UI can be reviewed.
+    return renderCustomer({
+      session: null,
+      resolved: { client_role: "admin", client_name: "Preview client" },
+      sections: { bridge: true, dashboard: true },
+      onSignOut: () => { setChosenSection(null); setCustomerPreview(false); },
+      preview: true,
+    });
   }
 
   return (
     <AuthGate onPreview={() => setCustomerPreview(true)}>
-      {(accountType, session, resolved, handleSignOut) =>
-        accountType === "admin" ? (
-          <AdminShell session={session} onSignOut={handleSignOut} />
-        ) : (
-          <CustomerShell
-            session={session}
-            onSignOut={handleSignOut}
-            clientRole={resolved?.client_role || "staff"}
-            storeName={resolved?.client_name}
-            resolved={resolved}
-          />
-        )
-      }
+      {(accountType, session, resolved, handleSignOut, sections) => {
+        if (accountType === "admin") {
+          return <AdminShell session={session} onSignOut={handleSignOut} />;
+        }
+        // A client with neither section has nothing to show. Better to say so
+        // plainly than to drop them into an empty shell.
+        if (!sections.bridge && !sections.dashboard) {
+          return <NoSections email={session?.user?.email} onSignOut={handleSignOut} />;
+        }
+        return renderCustomer({ session, resolved, sections, onSignOut: handleSignOut });
+      }}
     </AuthGate>
   );
 }
